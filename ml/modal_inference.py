@@ -4,7 +4,7 @@ import modal
 
 app = modal.App("neuroscope-monai")
 
-project_root = Path(__file__).parent.parent
+project_root = Path(__file__).resolve().parent.parent
 
 image = (
     modal.Image.debian_slim()

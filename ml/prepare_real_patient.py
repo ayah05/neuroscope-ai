@@ -5,7 +5,7 @@ import nibabel as nib
 
 ROOT = Path(__file__).parent.parent
 
-TAR_FILE = ROOT / "downloads" / "Task01_BrainTumour.tar"
+TAR_FILE = ROOT / "Task01_BrainTumour.tar"
 OUTPUT_DIR = ROOT / "ml" / "data" / "real_patient"
 
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)

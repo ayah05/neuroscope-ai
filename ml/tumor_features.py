@@ -6,416 +6,397 @@ import numpy as np
 
 
 # ============================================================
-# PATHS
+# 1. PATHS
 # ============================================================
 
-ROOT = Path(__file__).parent.parent
+ROOT = Path(__file__).resolve().parent.parent
+
+PATIENT_ID = "BRATS_457"
 
 DATA = ROOT / "ml" / "data" / "real_patient"
+OUTPUT_DIR = ROOT / "outputs"
 
-PREDICTION = (
-    ROOT
-    / "outputs"
-    / "brats_457_prediction.nii.gz"
-)
+PREDICTION = OUTPUT_DIR / f"{PATIENT_ID.lower()}_prediction.nii.gz"
+OUTPUT_FILE = OUTPUT_DIR / f"{PATIENT_ID.lower()}_features.json"
 
 
 # ============================================================
-# 1. LOAD DATA
+# 2. HELPER FUNCTIONS
 # ============================================================
 
-print("\nLoading MRI data...")
+def load_aligned_mri(path, reference):
+    """Check that the MRI and segmentation use the same grid."""
 
-prediction_nii = nib.load(PREDICTION)
+    nii = nib.load(path)
 
-prediction = prediction_nii.get_fdata()
+    if nii.shape != reference.shape:
+        raise ValueError(
+            f"Shape mismatch for {path.name}: "
+            f"{nii.shape} != {reference.shape}"
+        )
 
-t1ce = nib.load(
-    DATA / "patient_t1ce.nii.gz"
-).get_fdata()
+    if not np.allclose(
+        nii.affine,
+        reference.affine,
+        rtol=1e-5,
+        atol=1e-4,
+    ):
+        raise ValueError(
+            f"Spatial alignment mismatch for {path.name}"
+        )
 
-t1 = nib.load(
-    DATA / "patient_t1.nii.gz"
-).get_fdata()
+    volume = nii.get_fdata(dtype=np.float32)
 
-t2 = nib.load(
-    DATA / "patient_t2.nii.gz"
-).get_fdata()
+    if not np.isfinite(volume).all():
+        raise ValueError(
+            f"Non-finite MRI values in {path.name}"
+        )
 
-flair = nib.load(
-    DATA / "patient_flair.nii.gz"
-).get_fdata()
-
-
-# ============================================================
-# 2. VOXEL INFORMATION
-# ============================================================
-
-voxel_spacing = prediction_nii.header.get_zooms()[:3]
-
-voxel_volume_mm3 = float(
-    np.prod(voxel_spacing)
-)
+    return volume
 
 
-print("\n========== VOXEL INFO ==========")
-
-print(
-    "Voxel spacing:",
-    voxel_spacing
-)
-
-print(
-    "Voxel volume:",
-    voxel_volume_mm3,
-    "mm³"
-)
-
-
-# ============================================================
-# 3. CREATE TUMOR REGIONS
-# ============================================================
-
-# BraTS label map used in our final segmentation:
-#
-# 0 = Background
-# 1 = Necrotic / non-enhancing tumor core
-# 2 = Peritumoral edema
-# 4 = Enhancing tumor
-
-
-necrotic_non_enhancing = (
-    prediction == 1
-)
-
-edema = (
-    prediction == 2
-)
-
-enhancing_tumor = (
-    prediction == 4
-)
-
-
-# Tumor Core:
-# necrotic/non-enhancing + enhancing tumor
-
-tumor_core = np.logical_or(
-    necrotic_non_enhancing,
-    enhancing_tumor
-)
-
-
-# Whole Tumor:
-# every tumor-associated label
-
-whole_tumor = (
-    prediction > 0
-)
-
-
-# ============================================================
-# 4. VOLUME CALCULATION
-# ============================================================
-
-def volume_ml(mask):
-
-    voxel_count = np.count_nonzero(
-        mask
-    )
-
-    volume_mm3 = (
-        voxel_count
-        * voxel_volume_mm3
-    )
+def volume_ml(mask, voxel_volume_mm3):
+    """Convert the number of masked voxels to millilitres."""
 
     return float(
-        volume_mm3 / 1000
+        np.count_nonzero(mask) * voxel_volume_mm3 / 1000.0
     )
 
 
-whole_tumor_volume = volume_ml(
-    whole_tumor
-)
+def fraction(numerator, denominator):
+    """Return None when the ratio is undefined."""
 
-tumor_core_volume = volume_ml(
-    tumor_core
-)
+    if denominator == 0:
+        return None
 
-enhancing_tumor_volume = volume_ml(
-    enhancing_tumor
-)
-
-edema_volume = volume_ml(
-    edema
-)
+    return round(float(numerator / denominator), 4)
 
 
-# ============================================================
-# 5. FRACTIONS
-# ============================================================
-
-if whole_tumor_volume > 0:
-
-    enhancing_fraction = (
-        enhancing_tumor_volume
-        / whole_tumor_volume
-    )
-
-    core_fraction = (
-        tumor_core_volume
-        / whole_tumor_volume
-    )
-
-    edema_fraction = (
-        edema_volume
-        / whole_tumor_volume
-    )
-
-else:
-
-    enhancing_fraction = 0.0
-    core_fraction = 0.0
-    edema_fraction = 0.0
-
-
-# ============================================================
-# 6. CONNECTED COMPONENTS
-# ============================================================
-
-# This estimates whether the segmentation consists of
-# one or multiple spatially separated tumor regions.
-
-try:
-
-    from scipy.ndimage import label
-
-    labeled_tumor, lesion_count = label(
-        whole_tumor
-    )
-
-    lesion_count = int(
-        lesion_count
-    )
-
-except ImportError:
-
-    lesion_count = None
-
-
-# ============================================================
-# 7. TUMOR CENTER
-# ============================================================
-
-tumor_coordinates = np.argwhere(
-    whole_tumor
-)
-
-if len(tumor_coordinates) > 0:
-
-    centroid_voxel = np.mean(
-        tumor_coordinates,
-        axis=0
-    )
-
-    centroid_voxel = [
-        round(float(x), 1)
-        for x in centroid_voxel
-    ]
-
-else:
-
-    centroid_voxel = None
-
-
-# ============================================================
-# 8. MRI INTENSITY FEATURES
-# ============================================================
-
-def calculate_intensity_features(
-    volume,
-    mask
-):
+def intensity_features(volume, mask):
+    """Raw MRI intensities, without cross-patient normalization."""
 
     values = volume[mask]
 
     if values.size == 0:
-
         return {
             "mean": None,
             "std": None,
-            "median": None
+            "median": None,
         }
 
     return {
-
-        "mean": round(
-            float(np.mean(values)),
-            2
-        ),
-
-        "std": round(
-            float(np.std(values)),
-            2
-        ),
-
-        "median": round(
-            float(np.median(values)),
-            2
-        )
+        "mean": round(float(np.mean(values)), 2),
+        "std": round(float(np.std(values)), 2),
+        "median": round(float(np.median(values)), 2),
     }
 
 
-intensity_features = {
+def component_features(mask, voxel_volume_mm3):
+    """
+    Count connected mask components using 26-connectivity.
 
-    "T1": calculate_intensity_features(
-        t1,
-        whole_tumor
-    ),
+    These are segmentation components, not confirmed lesions.
+    No small-component filtering is applied.
+    """
 
-    "T1ce": calculate_intensity_features(
-        t1ce,
-        whole_tumor
-    ),
+    try:
+        from scipy.ndimage import label
+    except ImportError:
+        return {
+            "available": False,
+            "reason": "scipy is not installed",
+            "connectivity": 26,
+            "connected_component_count": None,
+            "component_volumes_ml": None,
+        }
 
-    "T2": calculate_intensity_features(
-        t2,
-        whole_tumor
-    ),
-
-    "FLAIR": calculate_intensity_features(
-        flair,
-        whole_tumor
-    )
-}
-
-
-# ============================================================
-# 9. CREATE STRUCTURED FEATURE OBJECT
-# ============================================================
-
-features = {
-
-    "patient_id":
-        "BRATS_457",
-
-    "analysis_type":
-        "automated MRI segmentation",
-
-    "model":
-        "MONAI SegResNet",
-
-    "tumor_context":
-        "brain tumor / glioma MRI segmentation",
-
-    "segmentation": {
-
-        "whole_tumor_volume_ml":
-            round(
-                whole_tumor_volume,
-                2
-            ),
-
-        "tumor_core_volume_ml":
-            round(
-                tumor_core_volume,
-                2
-            ),
-
-        "enhancing_tumor_volume_ml":
-            round(
-                enhancing_tumor_volume,
-                2
-            ),
-
-        "edema_volume_ml":
-            round(
-                edema_volume,
-                2
-            )
-    },
-
-    "ratios": {
-
-        "enhancing_fraction":
-            round(
-                enhancing_fraction,
-                3
-            ),
-
-        "core_fraction":
-            round(
-                core_fraction,
-                3
-            ),
-
-        "edema_fraction":
-            round(
-                edema_fraction,
-                3
-            )
-    },
-
-    "spatial": {
-
-        "lesion_count":
-            lesion_count,
-
-        "centroid_voxel":
-            centroid_voxel
-    },
-
-    "mri_intensity": intensity_features,
-
-    "classification":
-        None
-}
-
-
-# ============================================================
-# 10. PRINT RESULTS
-# ============================================================
-
-print(
-    "\n========== TUMOR FEATURES =========="
-)
-
-print(
-    json.dumps(
-        features,
-        indent=2
-    )
-)
-
-
-# ============================================================
-# 11. SAVE JSON
-# ============================================================
-
-output_file = (
-    ROOT
-    / "outputs"
-    / "brats_457_features.json"
-)
-
-
-with open(
-    output_file,
-    "w",
-    encoding="utf-8"
-) as file:
-
-    json.dump(
-        features,
-        file,
-        indent=2
+    labeled, count = label(
+        mask,
+        structure=np.ones((3, 3, 3), dtype=np.uint8),
     )
 
+    # Index 0 represents background.
+    sizes = np.bincount(labeled.ravel())[1:]
+    sizes = np.sort(sizes)[::-1]
 
-print(
-    "\nFeatures saved to:"
-)
+    volumes = sizes * voxel_volume_mm3 / 1000.0
 
-print(
-    output_file
-)
+    return {
+        "available": True,
+        "connectivity": 26,
+        "small_component_filter_applied": False,
+        "connected_component_count": int(count),
+        "component_volumes_ml": [
+            round(float(value), 4)
+            for value in volumes
+        ],
+    }
+
+
+# ============================================================
+# 3. MAIN
+# ============================================================
+
+def main():
+    print("\nLoading segmentation...")
+
+    prediction_nii = nib.load(PREDICTION)
+
+    if len(prediction_nii.shape) != 3:
+        raise ValueError(
+            f"Expected a 3D segmentation, got {prediction_nii.shape}"
+        )
+
+    prediction = prediction_nii.get_fdata()
+
+    if not np.isfinite(prediction).all():
+        raise ValueError("Segmentation contains non-finite values")
+
+    if not np.isin(prediction, [0, 1, 2, 4]).all():
+        raise ValueError(
+            "Unexpected segmentation labels: "
+            f"{np.unique(prediction).tolist()}"
+        )
+
+    prediction = prediction.astype(np.uint8)
+
+    # --------------------------------------------------------
+    # Spatial information
+    # --------------------------------------------------------
+
+    affine = prediction_nii.affine
+
+    if not np.isfinite(affine).all():
+        raise ValueError("Segmentation affine contains invalid values")
+
+    spatial_unit, _ = prediction_nii.header.get_xyzt_units()
+
+    # Explicit conversion to millimetres.
+    unit_to_mm = {
+        "mm": 1.0,
+        "meter": 1000.0,
+        "micron": 0.001,
+    }
+
+    if spatial_unit not in unit_to_mm:
+        raise ValueError(
+            f"Spatial unit is '{spatial_unit}'. "
+            "Verify the NIfTI spatial unit before calculating volumes."
+        )
+
+    scale_to_mm = unit_to_mm[spatial_unit]
+
+    voxel_spacing_mm = (
+        nib.affines.voxel_sizes(affine) * scale_to_mm
+    )
+
+    # Determinant also handles affine grids containing shear.
+    voxel_volume_mm3 = float(
+        abs(np.linalg.det(affine[:3, :3])) * scale_to_mm**3
+    )
+
+    if (
+        not np.isfinite(voxel_volume_mm3)
+        or voxel_volume_mm3 <= 0
+    ):
+        raise ValueError("Invalid voxel volume")
+
+    print("Voxel spacing (mm):", voxel_spacing_mm)
+    print("Voxel volume (mm³):", voxel_volume_mm3)
+
+    # --------------------------------------------------------
+    # Load and validate MRI modalities
+    # --------------------------------------------------------
+
+    print("\nLoading and checking MRI modalities...")
+
+    modalities = {
+        "T1": load_aligned_mri(
+            DATA / "patient_t1.nii.gz",
+            prediction_nii,
+        ),
+        "T1ce": load_aligned_mri(
+            DATA / "patient_t1ce.nii.gz",
+            prediction_nii,
+        ),
+        "T2": load_aligned_mri(
+            DATA / "patient_t2.nii.gz",
+            prediction_nii,
+        ),
+        "FLAIR": load_aligned_mri(
+            DATA / "patient_flair.nii.gz",
+            prediction_nii,
+        ),
+    }
+
+    # --------------------------------------------------------
+    # BraTS regions from the final predicted label map
+    #
+    # 0: Background
+    # 1: Necrotic / non-enhancing tumor core
+    # 2: Peritumoral edema
+    # 4: Enhancing tumor
+    # --------------------------------------------------------
+
+    regions = {
+        "necrotic_non_enhancing": prediction == 1,
+        "edema": prediction == 2,
+        "enhancing_tumor": prediction == 4,
+        "tumor_core": np.isin(prediction, [1, 4]),
+        "whole_tumor": prediction > 0,
+    }
+
+    whole_tumor = regions["whole_tumor"]
+
+    counts = {
+        name: int(np.count_nonzero(mask))
+        for name, mask in regions.items()
+    }
+
+    volumes = {
+        name: volume_ml(mask, voxel_volume_mm3)
+        for name, mask in regions.items()
+    }
+
+    # --------------------------------------------------------
+    # Centroid: voxel coordinates and NIfTI world coordinates
+    # This does not assign an anatomical brain region.
+    # --------------------------------------------------------
+
+    centroid_voxel = None
+    centroid_world_mm = None
+
+    if counts["whole_tumor"] > 0:
+        coordinates = np.argwhere(whole_tumor)
+        center = coordinates.mean(axis=0)
+
+        world_center_mm = (
+            nib.affines.apply_affine(affine, center)
+            * scale_to_mm
+        )
+
+        centroid_voxel = [
+            round(float(value), 3)
+            for value in center
+        ]
+
+        centroid_world_mm = [
+            round(float(value), 3)
+            for value in world_center_mm
+        ]
+
+    # --------------------------------------------------------
+    # Structured feature object
+    # --------------------------------------------------------
+
+    features = {
+        "patient_id": PATIENT_ID,
+        "analysis_type": "predicted_segmentation_feature_extraction",
+        "model": {
+            "name": "MONAI SegResNet",
+            "bundle": "brats_mri_segmentation",
+        },
+        "source_files": {
+            "prediction": PREDICTION.name,
+        },
+        "label_mapping": {
+            "0": "background",
+            "1": "necrotic_non_enhancing_tumor_core",
+            "2": "peritumoral_edema",
+            "4": "enhancing_tumor",
+        },
+        "geometry": {
+            "shape": list(prediction.shape),
+            "voxel_spacing_mm": [
+                round(float(value), 6)
+                for value in voxel_spacing_mm
+            ],
+            "voxel_volume_mm3": voxel_volume_mm3,
+            "source_spatial_unit": spatial_unit,
+        },
+        "quality_checks": {
+            "allowed_labels_verified": True,
+            "mri_shapes_match_prediction": True,
+            "mri_affines_match_prediction": True,
+            "finite_values_verified": True,
+            "empty_segmentation": counts["whole_tumor"] == 0,
+            "ground_truth_evaluation_performed": False,
+        },
+        "segmentation": {
+            f"{name}_volume_ml": round(value, 4)
+            for name, value in volumes.items()
+        },
+        "voxel_counts": counts,
+        "ratios": {
+            "denominator": "whole_tumor",
+            "enhancing_fraction": fraction(
+                counts["enhancing_tumor"],
+                counts["whole_tumor"],
+            ),
+            "necrotic_non_enhancing_fraction": fraction(
+                counts["necrotic_non_enhancing"],
+                counts["whole_tumor"],
+            ),
+            "core_fraction": fraction(
+                counts["tumor_core"],
+                counts["whole_tumor"],
+            ),
+            "edema_fraction": fraction(
+                counts["edema"],
+                counts["whole_tumor"],
+            ),
+        },
+        "spatial": {
+            "centroid_voxel": centroid_voxel,
+            "centroid_world_mm": centroid_world_mm,
+            "world_coordinate_system": "NIfTI RAS+",
+            "anatomical_location": None,
+            "components": component_features(
+                whole_tumor,
+                voxel_volume_mm3,
+            ),
+        },
+        "mri_intensity": {
+            "measurement_region": "predicted_whole_tumor",
+            "normalization": "none",
+            "units": "arbitrary",
+            "features": {
+                name: intensity_features(volume, whole_tumor)
+                for name, volume in modalities.items()
+            },
+        },
+        "classification": None,
+        "limitations": [
+            "Features describe the model prediction, not verified tissue.",
+            "Whole tumor includes the predicted edema region.",
+            "Tumor core includes the enhancing region; these volumes overlap.",
+            "Connected components are not confirmed separate lesions.",
+            "Raw MRI intensities are not standardized across patients.",
+            "No anatomical atlas localization or classification performed.",
+        ],
+    }
+
+    # --------------------------------------------------------
+    # Save
+    # --------------------------------------------------------
+
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+    with OUTPUT_FILE.open("w", encoding="utf-8") as file:
+        json.dump(
+            features,
+            file,
+            indent=2,
+            ensure_ascii=False,
+            allow_nan=False,
+        )
+
+    print("\n========== TUMOR FEATURES ==========")
+    print(json.dumps(features, indent=2, ensure_ascii=False))
+
+    print("\nFeatures saved to:")
+    print(OUTPUT_FILE)
+
+
+if __name__ == "__main__":
+    main()
