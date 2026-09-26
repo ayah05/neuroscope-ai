@@ -26,24 +26,25 @@ image = (
 )
 
 
-@app.function(
-    image=image,
-    gpu="T4",
-    timeout=600
-)
-def run_inference():
+# --------------------------------------------------
+# GEMEINSAME MODELL-LOGIK
+# wird von run_inference() und segment() genutzt
+# --------------------------------------------------
+
+def predict(image_np):
+    """
+    Input:  numpy-Array [4, H, W, D] in Kanal-Reihenfolge T1ce, T1, T2, FLAIR
+    Output: numpy-Array [H, W, D] (uint8) im BraTS-Schema
+            0 = Hintergrund, 1 = nekrotisch/nicht-anreichernd,
+            2 = Ödem, 4 = anreichernder Tumor
+    """
 
     import torch
-    import nibabel as nib
     import numpy as np
 
     from monai.networks.nets import SegResNet
     from monai.transforms import NormalizeIntensity
     from monai.inferers import sliding_window_inference
-
-    # --------------------------------------------------
-    # 1. GPU
-    # --------------------------------------------------
 
     device = torch.device("cuda")
 
@@ -51,43 +52,7 @@ def run_inference():
     print("GPU:", torch.cuda.get_device_name(0))
 
     # --------------------------------------------------
-    # 2. MRI DATEIEN LADEN
-    # WICHTIG: Reihenfolge T1ce, T1, T2, FLAIR
-    # --------------------------------------------------
-
-    paths = [
-        "/app/data/patient_t1ce.nii.gz",
-        "/app/data/patient_t1.nii.gz",
-        "/app/data/patient_t2.nii.gz",
-        "/app/data/patient_flair.nii.gz",
-    ]
-
-    volumes = []
-
-    for path in paths:
-        img = nib.load(path)
-
-        volume = img.get_fdata().astype(np.float32)
-
-        volumes.append(volume)
-
-        print(
-            path,
-            "shape:",
-            volume.shape,
-            "min:",
-            volume.min(),
-            "max:",
-            volume.max()
-        )
-
-    # [4, H, W, D]
-    image_np = np.stack(volumes, axis=0)
-
-    print("\nStacked MRI shape:", image_np.shape)
-
-    # --------------------------------------------------
-    # 3. NORMALISIERUNG
+    # 1. NORMALISIERUNG
     # gleiche Idee wie im MONAI Bundle
     # --------------------------------------------------
 
@@ -109,7 +74,7 @@ def run_inference():
     print("Input device:", image_tensor.device)
 
     # --------------------------------------------------
-    # 4. SEGRESNET ERSTELLEN
+    # 2. SEGRESNET ERSTELLEN
     # exakt entsprechend inference.json
     # --------------------------------------------------
 
@@ -123,7 +88,7 @@ def run_inference():
     ).to(device)
 
     # --------------------------------------------------
-    # 5. PRETRAINED CHECKPOINT LADEN
+    # 3. PRETRAINED CHECKPOINT LADEN
     # --------------------------------------------------
 
     checkpoint = torch.load(
@@ -145,7 +110,7 @@ def run_inference():
     print("Model loaded on:", next(model.parameters()).device)
 
     # --------------------------------------------------
-    # 6. INFERENCE
+    # 4. INFERENCE
     # --------------------------------------------------
 
     print("\n========== INFERENCE ==========")
@@ -165,7 +130,7 @@ def run_inference():
     print("Raw prediction shape:", prediction.shape)
 
     # --------------------------------------------------
-    # 7. THRESHOLD
+    # 5. THRESHOLD
     # --------------------------------------------------
 
     prediction = prediction[0] > 0.5
@@ -173,7 +138,7 @@ def run_inference():
     print("Binary prediction shape:", prediction.shape)
 
     # --------------------------------------------------
-    # 8. BRAts LABEL MAP
+    # 6. BRAts LABEL MAP
     #
     # exakt entsprechend der Bundle inference.json:
     #
@@ -208,8 +173,63 @@ def run_inference():
     for label, count in zip(unique, counts):
         print(f"Label {label}: {count} voxels")
 
+    return segmentation
+
+
+# --------------------------------------------------
+# DEMO-PATIENT (fest eingebaut aus data/real_patient)
+# --------------------------------------------------
+
+@app.function(
+    image=image,
+    gpu="T4",
+    timeout=600
+)
+def run_inference():
+
+    import nibabel as nib
+    import numpy as np
+
     # --------------------------------------------------
-    # 9. NIFTI ERZEUGEN
+    # MRI DATEIEN LADEN
+    # WICHTIG: Reihenfolge T1ce, T1, T2, FLAIR
+    # --------------------------------------------------
+
+    paths = [
+        "/app/data/patient_t1ce.nii.gz",
+        "/app/data/patient_t1.nii.gz",
+        "/app/data/patient_t2.nii.gz",
+        "/app/data/patient_flair.nii.gz",
+    ]
+
+    volumes = []
+
+    for path in paths:
+        img = nib.load(path)
+
+        volume = img.get_fdata().astype(np.float32)
+
+        volumes.append(volume)
+
+        print(
+            path,
+            "shape:",
+            volume.shape,
+            "min:",
+            volume.min(),
+            "max:",
+            volume.max()
+        )
+
+    # [4, H, W, D]
+    image_np = np.stack(volumes, axis=0)
+
+    print("\nStacked MRI shape:", image_np.shape)
+
+    segmentation = predict(image_np)
+
+    # --------------------------------------------------
+    # NIFTI ERZEUGEN
     # --------------------------------------------------
 
     reference = nib.load(paths[0])
@@ -226,6 +246,56 @@ def run_inference():
     nib.save(result, output_file)
 
     print("\nSaved on Modal:", output_file)
+
+    with open(output_file, "rb") as f:
+        return f.read()
+
+
+# --------------------------------------------------
+# HOCHGELADENER SCAN (vom Backend aufgerufen)
+# --------------------------------------------------
+
+@app.function(
+    image=image,
+    gpu="T4",
+    timeout=600
+)
+def segment(scan_bytes: bytes) -> bytes:
+    """
+    Input:  4D-NIfTI (.nii.gz) im MSD-Format [H, W, D, 4],
+            Kanäle FLAIR, T1, T1ce, T2
+    Output: Segmentierung als .nii.gz (Bytes) im BraTS-Schema
+    """
+
+    import nibabel as nib
+    import numpy as np
+
+    input_file = "/tmp/upload.nii.gz"
+
+    with open(input_file, "wb") as f:
+        f.write(scan_bytes)
+
+    img = nib.load(input_file)
+
+    data = img.get_fdata().astype(np.float32)
+
+    print("Uploaded MRI shape:", data.shape)
+
+    # MSD-Reihenfolge (FLAIR, T1, T1ce, T2) -> Modell-Reihenfolge
+    # (T1ce, T1, T2, FLAIR), [H,W,D,4] -> [4,H,W,D]
+    image_np = np.stack(
+        [data[..., 2], data[..., 1], data[..., 3], data[..., 0]],
+        axis=0
+    )
+
+    segmentation = predict(image_np)
+
+    # 3D-Ergebnis: nur affine übernehmen, der 4D-Header passt nicht
+    result = nib.Nifti1Image(segmentation, img.affine)
+
+    output_file = "/tmp/prediction.nii.gz"
+
+    nib.save(result, output_file)
 
     with open(output_file, "rb") as f:
         return f.read()

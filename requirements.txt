@@ -1,7 +1,28 @@
-torch
-monai
-nibabel
-matplotlib
-numpy
-fire
-requests
+# Getestet mit Python 3.14
+# Installation: pip install -r requirements.txt
+
+# ML
+torch==2.14.0
+monai==1.6.0
+nibabel==5.4.2
+numpy==2.5.3
+scipy==1.18.1
+matplotlib==3.11.2
+fire==0.7.1
+huggingface_hub==2.0.0
+
+# Daten-Download
+requests==2.34.2
+tqdm==4.70.1
+
+# GPU-Inferenz in der Cloud
+modal==1.5.5
+
+# Backend
+fastapi==0.141.1
+uvicorn==0.54.0
+python-multipart==0.0.32
+Markdown==3.11
+
+# Amass-API
+python-dotenv==1.2.3

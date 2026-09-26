@@ -1,0 +1,470 @@
+<!doctype html>
+<html lang="de">
+
+<head>
+    <meta charset="utf-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1"
+    >
+
+    <meta
+        name="theme-color"
+        content="#101722"
+    >
+
+    <meta
+        name="description"
+        content="NeuroScope AI – AI-assisted MRI tumor segmentation and research."
+    >
+
+    <title>NeuroScope AI · MRI Analysis</title>
+
+    <link
+        rel="stylesheet"
+        href="./css/styles.css"
+    >
+</head>
+
+<body>
+
+<div class="app">
+
+    <!-- =====================================================
+         SIDEBAR
+    ====================================================== -->
+
+    <aside class="sidebar">
+
+        <div class="brand">
+
+            <div class="brand-mark">
+                N
+            </div>
+
+            <div>
+                NeuroScope
+                <span>AI</span>
+            </div>
+
+        </div>
+
+
+        <nav>
+
+            <p class="nav-label">
+                Workspace
+            </p>
+
+            <button class="nav-item active">
+                MRI Analysis
+            </button>
+
+        </nav>
+
+
+        <div class="sidebar-footer">
+
+            <strong>
+                Research prototype
+            </strong>
+
+            <p>
+                AI-generated results must be reviewed
+                by qualified medical professionals.
+            </p>
+
+        </div>
+
+    </aside>
+
+
+    <!-- =====================================================
+         MAIN
+    ====================================================== -->
+
+    <main>
+
+        <!-- TOP BAR -->
+
+        <header class="topbar">
+
+            <div class="breadcrumb">
+                Workspace
+                <span>/</span>
+                MRI Analysis
+            </div>
+
+            <div class="status">
+                <span class="status-dot"></span>
+                NeuroScope AI
+            </div>
+
+        </header>
+
+
+        <div class="content">
+
+            <!-- PAGE HEADING -->
+
+            <header class="page-heading">
+
+                <div>
+
+                    <p class="eyebrow">
+                        AI-ASSISTED IMAGING
+                    </p>
+
+                    <h1>
+                        Brain Tumor Segmentation
+                    </h1>
+
+                    <p class="subtitle">
+                        Analyze MRI data using MONAI and explore
+                        related research evidence.
+                    </p>
+
+                </div>
+
+                <div class="session">
+                    <span></span>
+                    New session
+                </div>
+
+            </header>
+
+
+            <!-- =================================================
+                 WORKSPACE
+            ================================================== -->
+
+            <div class="workspace">
+
+
+                <!-- =============================================
+                     LEFT: MRI VIEWER
+                ============================================== -->
+
+                <section class="panel viewer">
+
+                    <div class="panel-header">
+
+                        <div>
+                            <p class="panel-eyebrow">
+                                MRI VIEWER
+                            </p>
+
+                            <h2>
+                                Medical Image
+                            </h2>
+                        </div>
+
+                        <span
+                            class="tag"
+                            id="imageTag"
+                        >
+                            No scan
+                        </span>
+
+                    </div>
+
+
+                    <!-- UPLOAD -->
+
+                    <div
+                        class="dropzone"
+                        id="dropzone"
+                    >
+
+                        <div class="upload-icon">
+                            ↑
+                        </div>
+
+
+                        <div class="upload-copy">
+
+                            <strong>
+                                Drop MRI here or select a file
+                            </strong>
+
+                            <p>
+                                4D NIfTI (.nii.gz) with FLAIR, T1, T1ce, T2 · max. 50 MB
+                            </p>
+
+                        </div>
+
+
+                        <button
+                            class="secondary-button"
+                            id="chooseBtn"
+                            type="button"
+                        >
+                            Select file
+                        </button>
+
+
+                        <input
+                            id="fileInput"
+                            type="file"
+                            accept=".nii,.gz"
+                            hidden
+                        >
+
+                    </div>
+
+
+                    <!-- TOOLBAR -->
+
+                    <div class="viewer-toolbar">
+
+                        <span id="scanMeta">
+                            No file selected
+                        </span>
+
+
+                        <div class="viewer-tools">
+
+                            <button
+                                id="zoomOut"
+                                class="icon-button"
+                                disabled
+                                title="Zoom out"
+                            >
+                                −
+                            </button>
+
+                            <button
+                                id="zoomIn"
+                                class="icon-button"
+                                disabled
+                                title="Zoom in"
+                            >
+                                +
+                            </button>
+
+                            <button
+                                id="rotate"
+                                class="icon-button"
+                                disabled
+                                title="Rotate"
+                            >
+                                ↻
+                            </button>
+
+                        </div>
+
+                    </div>
+
+
+                    <!-- IMAGE VIEWER -->
+
+                    <div
+                        class="scan-stage"
+                        id="scanStage"
+                    >
+
+                        <div
+                            class="scan-empty"
+                            id="scanEmpty"
+                        >
+
+                            <div class="brain-placeholder">
+                                MRI
+                            </div>
+
+                            <strong>
+                                Image preview
+                            </strong>
+
+                            <p>
+                                Your selected MRI will appear here.
+                            </p>
+
+                        </div>
+
+
+                        <img
+                            id="scanImage"
+                            alt="Selected MRI preview"
+                        >
+
+
+                        <div
+                            class="dicom-message"
+                            id="dicomMessage"
+                        >
+
+                            <strong>
+                                NIfTI scan selected
+                            </strong>
+
+                            <p>
+                                The segmented slice will appear here
+                                after the analysis.
+                            </p>
+
+                        </div>
+
+
+                        <span
+                            class="viewport-label"
+                            id="viewportLabel"
+                        >
+                            VIEWPORT 01
+                        </span>
+
+                    </div>
+
+
+                    <!-- ANALYZE -->
+
+                    <div class="analysis-actions">
+
+                        <button
+                            class="primary-button"
+                            id="analyzeBtn"
+                            disabled
+                        >
+                            Analyze MRI
+                        </button>
+
+                        <small id="uploadHint">
+                            File remains local until analysis is started.
+                        </small>
+
+                    </div>
+
+                </section>
+
+
+                <!-- =============================================
+                     RIGHT: RESULTS
+                ============================================== -->
+
+                <section class="panel result-panel">
+
+                    <div class="panel-header">
+
+                        <div>
+
+                            <p class="panel-eyebrow">
+                                ANALYSIS
+                            </p>
+
+                            <h2>
+                                Results
+                            </h2>
+
+                        </div>
+
+                        <span
+                            class="tag"
+                            id="resultTag"
+                        >
+                            Ready
+                        </span>
+
+                    </div>
+
+
+                    <div
+                        class="error"
+                        id="errorBox"
+                    ></div>
+
+
+                    <div
+                        class="result-content"
+                        id="resultContent"
+                    >
+
+                        <div class="empty-result">
+
+                            <div class="result-icon">
+                                AI
+                            </div>
+
+                            <h3>
+                                No analysis yet
+                            </h3>
+
+                            <p>
+                                Select an MRI and start the analysis
+                                to generate a MONAI segmentation.
+                            </p>
+
+                        </div>
+
+                    </div>
+
+
+                    <!-- PIPELINE -->
+
+                    <div class="pipeline">
+
+                        <p class="section-label">
+                            PIPELINE
+                        </p>
+
+
+                        <div class="pipeline-steps">
+
+                            <div
+                                class="pipeline-step active"
+                                id="step1"
+                            >
+                                <span>1</span>
+                                MRI
+                            </div>
+
+                            <div class="connector"></div>
+
+
+                            <div
+                                class="pipeline-step"
+                                id="step2"
+                            >
+                                <span>2</span>
+                                MONAI
+                            </div>
+
+                            <div class="connector"></div>
+
+
+                            <div
+                                class="pipeline-step"
+                                id="step3"
+                            >
+                                <span>3</span>
+                                Research
+                            </div>
+
+                        </div>
+
+                    </div>
+
+                </section>
+
+            </div>
+
+        </div>
+
+    </main>
+
+</div>
+
+
+<script>
+    // Backend liefert das Frontend selbst aus (backend/app.py)
+    window.NEUROSCOPE_API_URL = "/api/analyze";
+</script>
+
+<script
+    type="module"
+    src="./js/app.js"
+></script>
+
+</body>
+
+</html>
