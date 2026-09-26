@@ -7,54 +7,63 @@ import numpy as np
 
 ROOT = Path(__file__).parent.parent
 
-DATA = ROOT / "ml" / "data" / "test_patient"
-SEGMENTATION = ROOT / "outputs" / "segmentation.nii.gz"
+DATA = ROOT / "ml" / "data" / "real_patient"
+PREDICTION = ROOT / "outputs" / "brats_457_prediction.nii.gz"
 
 
-# --------------------------------------------------
-# 1. MRI-DATEN LADEN
-# --------------------------------------------------
+# ============================================================
+# 1. LOAD DATA
+# ============================================================
 
-t1ce = nib.load(DATA / "test_t1ce.nii.gz").get_fdata()
-t1 = nib.load(DATA / "test_t1.nii.gz").get_fdata()
-t2 = nib.load(DATA / "test_t2.nii.gz").get_fdata()
-flair = nib.load(DATA / "test_flair.nii.gz").get_fdata()
+t1ce = nib.load(DATA / "patient_t1ce.nii.gz").get_fdata()
+t1 = nib.load(DATA / "patient_t1.nii.gz").get_fdata()
+t2 = nib.load(DATA / "patient_t2.nii.gz").get_fdata()
+flair = nib.load(DATA / "patient_flair.nii.gz").get_fdata()
 
-seg = nib.load(SEGMENTATION).get_fdata()
-
-
-print("T1ce:", t1ce.shape)
-print("T1:", t1.shape)
-print("T2:", t2.shape)
-print("FLAIR:", flair.shape)
-print("Segmentation:", seg.shape)
-
-print("Segmentation labels:", np.unique(seg))
+prediction = nib.load(PREDICTION).get_fdata()
+ground_truth = nib.load(DATA / "ground_truth.nii.gz").get_fdata()
 
 
-# --------------------------------------------------
-# 2. SLICE AUSWÄHLEN
-# --------------------------------------------------
+print("\n========== SHAPES ==========")
 
-# Falls Tumor vorhanden:
-tumor_per_slice = np.sum(seg > 0, axis=(0, 1))
-
-if tumor_per_slice.max() > 0:
-    slice_idx = int(np.argmax(tumor_per_slice))
-else:
-    slice_idx = flair.shape[2] // 2
-
-print("Showing slice:", slice_idx)
+print("T1ce:        ", t1ce.shape)
+print("T1:          ", t1.shape)
+print("T2:          ", t2.shape)
+print("FLAIR:       ", flair.shape)
+print("Prediction:  ", prediction.shape)
+print("Ground Truth:", ground_truth.shape)
 
 
-# --------------------------------------------------
-# 3. VISUALISIERUNG
-# --------------------------------------------------
+print("\n========== LABELS ==========")
 
-fig, axes = plt.subplots(2, 3, figsize=(15, 9))
+print("Prediction labels:", np.unique(prediction))
+print("Ground truth labels:", np.unique(ground_truth))
 
+
+# ============================================================
+# 2. FIND SLICE WITH MOST GROUND-TRUTH TUMOR
+# ============================================================
+
+tumor_per_slice = np.sum(
+    ground_truth > 0,
+    axis=(0, 1)
+)
+
+slice_idx = int(np.argmax(tumor_per_slice))
+
+print("\nSlice with most tumor:", slice_idx)
+print(
+    "Tumor voxels on slice:",
+    tumor_per_slice[slice_idx]
+)
+
+
+# ============================================================
+# 3. HELPER FUNCTIONS
+# ============================================================
 
 def show_mri(ax, volume, title):
+
     ax.imshow(
         volume[:, :, slice_idx].T,
         cmap="gray",
@@ -65,73 +74,198 @@ def show_mri(ax, volume, title):
     ax.axis("off")
 
 
-show_mri(axes[0, 0], t1ce, "T1ce")
-show_mri(axes[0, 1], t1, "T1")
-show_mri(axes[0, 2], t2, "T2")
+def show_overlay(ax, background, segmentation, title):
 
-show_mri(axes[1, 0], flair, "FLAIR")
+    # MRI
+    ax.imshow(
+        background[:, :, slice_idx].T,
+        cmap="gray",
+        origin="lower"
+    )
+
+    # Segmentation
+    mask = segmentation[:, :, slice_idx].T
+
+    masked = np.ma.masked_where(
+        mask == 0,
+        mask
+    )
+
+    ax.imshow(
+        masked,
+        cmap="jet",
+        alpha=0.55,
+        origin="lower",
+        vmin=1,
+        vmax=4
+    )
+
+    ax.set_title(title)
+    ax.axis("off")
 
 
-# --------------------------------------------------
-# SEGMENTATION
-# --------------------------------------------------
+# ============================================================
+# 4. CREATE FIGURE
+# ============================================================
+
+fig, axes = plt.subplots(
+    3,
+    3,
+    figsize=(15, 14)
+)
+
+
+# ------------------------------------------------------------
+# MRI modalities
+# ------------------------------------------------------------
+
+show_mri(
+    axes[0, 0],
+    t1ce,
+    "T1ce"
+)
+
+show_mri(
+    axes[0, 1],
+    t1,
+    "T1"
+)
+
+show_mri(
+    axes[0, 2],
+    t2,
+    "T2"
+)
+
+
+show_mri(
+    axes[1, 0],
+    flair,
+    "FLAIR"
+)
+
+
+# ------------------------------------------------------------
+# Prediction
+# ------------------------------------------------------------
 
 axes[1, 1].imshow(
-    seg[:, :, slice_idx].T,
-    cmap="viridis",
+    prediction[:, :, slice_idx].T,
+    cmap="jet",
     origin="lower",
     vmin=0,
     vmax=4
 )
 
-axes[1, 1].set_title("MONAI Segmentation")
+axes[1, 1].set_title(
+    "MONAI Prediction"
+)
+
 axes[1, 1].axis("off")
 
 
-# --------------------------------------------------
-# FLAIR + SEGMENTATION OVERLAY
-# --------------------------------------------------
+# ------------------------------------------------------------
+# Ground Truth
+# ------------------------------------------------------------
 
 axes[1, 2].imshow(
+    ground_truth[:, :, slice_idx].T,
+    cmap="jet",
+    origin="lower",
+    vmin=0,
+    vmax=4
+)
+
+axes[1, 2].set_title(
+    "Ground Truth"
+)
+
+axes[1, 2].axis("off")
+
+
+# ------------------------------------------------------------
+# Prediction overlay
+# ------------------------------------------------------------
+
+show_overlay(
+    axes[2, 0],
+    flair,
+    prediction,
+    "FLAIR + MONAI Prediction"
+)
+
+
+# ------------------------------------------------------------
+# Ground truth overlay
+# ------------------------------------------------------------
+
+show_overlay(
+    axes[2, 1],
+    flair,
+    ground_truth,
+    "FLAIR + Ground Truth"
+)
+
+
+# ------------------------------------------------------------
+# Difference
+# ------------------------------------------------------------
+
+difference = (
+    prediction != ground_truth
+).astype(np.uint8)
+
+axes[2, 2].imshow(
     flair[:, :, slice_idx].T,
     cmap="gray",
     origin="lower"
 )
 
-mask = np.ma.masked_where(
-    seg[:, :, slice_idx].T == 0,
-    seg[:, :, slice_idx].T
+difference_mask = np.ma.masked_where(
+    difference[:, :, slice_idx].T == 0,
+    difference[:, :, slice_idx].T
 )
 
-axes[1, 2].imshow(
-    mask,
-    cmap="jet",
+axes[2, 2].imshow(
+    difference_mask,
+    cmap="Reds",
     alpha=0.6,
-    origin="lower",
-    vmin=1,
-    vmax=4
+    origin="lower"
 )
 
-axes[1, 2].set_title("FLAIR + Tumor Overlay")
-axes[1, 2].axis("off")
+axes[2, 2].set_title(
+    "Prediction vs Ground Truth"
+)
 
+axes[2, 2].axis("off")
+
+
+# ============================================================
+# 5. SAVE
+# ============================================================
 
 plt.suptitle(
-    f"NeuroScope AI – Slice {slice_idx}",
-    fontsize=16
+    f"NeuroScope AI – BRATS_457 – Slice {slice_idx}",
+    fontsize=18
 )
 
 plt.tight_layout()
 
-# zusätzlich als PNG speichern
-OUTPUT = ROOT / "outputs" / "visualization.png"
+
+output_file = (
+    ROOT
+    / "outputs"
+    / "brats_457_visualization.png"
+)
 
 plt.savefig(
-    OUTPUT,
+    output_file,
     dpi=150,
     bbox_inches="tight"
 )
 
-print("Visualization saved:", OUTPUT)
+print("\nVisualization saved:")
+print(output_file)
+
 
 plt.show()

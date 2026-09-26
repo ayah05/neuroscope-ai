@@ -1,6 +1,7 @@
 from pathlib import Path
 import modal
 
+
 app = modal.App("neuroscope-monai")
 
 project_root = Path(__file__).parent.parent
@@ -19,7 +20,7 @@ image = (
         "/app/model.pt"
     )
     .add_local_dir(
-        Path(__file__).parent / "data/test_patient",
+        Path(__file__).parent / "data/real_patient",
         "/app/data"
     )
 )
@@ -55,10 +56,10 @@ def run_inference():
     # --------------------------------------------------
 
     paths = [
-        "/app/data/test_t1ce.nii.gz",
-        "/app/data/test_t1.nii.gz",
-        "/app/data/test_t2.nii.gz",
-        "/app/data/test_flair.nii.gz",
+        "/app/data/patient_t1ce.nii.gz",
+        "/app/data/patient_t1.nii.gz",
+        "/app/data/patient_t2.nii.gz",
+        "/app/data/patient_flair.nii.gz",
     ]
 
     volumes = []
@@ -153,7 +154,7 @@ def run_inference():
 
         prediction = sliding_window_inference(
             inputs=image_tensor,
-            roi_size=(128, 128, 128),
+            roi_size=(240, 240, 160),
             sw_batch_size=1,
             predictor=model,
             overlap=0.5
@@ -219,37 +220,38 @@ def run_inference():
         reference.header
     )
 
-    output_path = "/tmp/segmentation.nii.gz"
+    # This path exists inside the Modal container
+    output_file = "/tmp/brats_457_prediction.nii.gz"
 
-    nib.save(result, output_path)
+    nib.save(result, output_file)
 
-    print("\nSaved:", output_path)
+    print("\nSaved on Modal:", output_file)
 
-    # Datei als Bytes zurück an deinen PC schicken
-    with open(output_path, "rb") as f:
+    with open(output_file, "rb") as f:
         return f.read()
 
 
 # --------------------------------------------------
 # LOKALER TEIL
 # --------------------------------------------------
-
 @app.local_entrypoint()
 def main():
 
     print("Starting MONAI GPU inference...")
 
+    # Runs in Modal cloud
     result = run_inference.remote()
 
+    # This runs locally on your PC
     output_dir = project_root / "outputs"
-    output_dir.mkdir(exist_ok=True)
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-    output_file = output_dir / "segmentation.nii.gz"
+    output_file = output_dir / "brats_457_prediction.nii.gz"
 
     output_file.write_bytes(result)
 
     print("\n================================")
     print("DONE!")
-    print("Segmentation saved to:")
+    print("Segmentation saved locally to:")
     print(output_file)
     print("================================")
