@@ -2,9 +2,27 @@ from pathlib import Path
 import modal
 
 
+# ============================================================
+# CONFIG
+# ============================================================
+
 app = modal.App("neuroscope-monai")
 
 project_root = Path(__file__).resolve().parent.parent
+
+LOCAL_DATA_DIR = (
+    project_root
+    / "ml"
+    / "data"
+    / "real_patients"
+)
+
+REMOTE_DATA_DIR = "/app/data"
+
+
+# ============================================================
+# MODAL IMAGE
+# ============================================================
 
 image = (
     modal.Image.debian_slim()
@@ -16,22 +34,32 @@ image = (
         "pytorch-ignite"
     )
     .add_local_file(
-        project_root / "bundles/brats_mri_segmentation/models/model.pt",
+        project_root
+        / "bundles"
+        / "brats_mri_segmentation"
+        / "models"
+        / "model.pt",
         "/app/model.pt"
     )
     .add_local_dir(
-        Path(__file__).parent / "data/real_patient",
-        "/app/data"
+        LOCAL_DATA_DIR,
+        REMOTE_DATA_DIR
     )
 )
 
+
+# ============================================================
+# GPU INFERENCE
+# ============================================================
 
 @app.function(
     image=image,
     gpu="T4",
-    timeout=600
+    timeout=1200
 )
 def run_inference():
+
+    from pathlib import Path
 
     import torch
     import nibabel as nib
@@ -41,77 +69,25 @@ def run_inference():
     from monai.transforms import NormalizeIntensity
     from monai.inferers import sliding_window_inference
 
-    # --------------------------------------------------
+
+    # ========================================================
     # 1. GPU
-    # --------------------------------------------------
+    # ========================================================
 
     device = torch.device("cuda")
 
     print("\n========== GPU ==========")
-    print("GPU:", torch.cuda.get_device_name(0))
-
-    # --------------------------------------------------
-    # 2. MRI DATEIEN LADEN
-    # WICHTIG: Reihenfolge T1ce, T1, T2, FLAIR
-    # --------------------------------------------------
-
-    paths = [
-        "/app/data/patient_t1ce.nii.gz",
-        "/app/data/patient_t1.nii.gz",
-        "/app/data/patient_t2.nii.gz",
-        "/app/data/patient_flair.nii.gz",
-    ]
-
-    volumes = []
-
-    for path in paths:
-        img = nib.load(path)
-
-        volume = img.get_fdata().astype(np.float32)
-
-        volumes.append(volume)
-
-        print(
-            path,
-            "shape:",
-            volume.shape,
-            "min:",
-            volume.min(),
-            "max:",
-            volume.max()
-        )
-
-    # [4, H, W, D]
-    image_np = np.stack(volumes, axis=0)
-
-    print("\nStacked MRI shape:", image_np.shape)
-
-    # --------------------------------------------------
-    # 3. NORMALISIERUNG
-    # gleiche Idee wie im MONAI Bundle
-    # --------------------------------------------------
-
-    image_tensor = torch.tensor(image_np)
-
-    normalizer = NormalizeIntensity(
-        nonzero=True,
-        channel_wise=True
+    print(
+        "GPU:",
+        torch.cuda.get_device_name(0)
     )
 
-    image_tensor = normalizer(image_tensor)
 
-    # Batch dimension hinzufügen:
-    # [4,H,W,D] -> [1,4,H,W,D]
+    # ========================================================
+    # 2. LOAD MODEL ONCE
+    # ========================================================
 
-    image_tensor = image_tensor.unsqueeze(0).to(device)
-
-    print("Model input shape:", image_tensor.shape)
-    print("Input device:", image_tensor.device)
-
-    # --------------------------------------------------
-    # 4. SEGRESNET ERSTELLEN
-    # exakt entsprechend inference.json
-    # --------------------------------------------------
+    print("\n========== MODEL ==========")
 
     model = SegResNet(
         blocks_down=[1, 2, 2, 4],
@@ -122,9 +98,6 @@ def run_inference():
         dropout_prob=0.2
     ).to(device)
 
-    # --------------------------------------------------
-    # 5. PRETRAINED CHECKPOINT LADEN
-    # --------------------------------------------------
 
     checkpoint = torch.load(
         "/app/model.pt",
@@ -132,126 +105,491 @@ def run_inference():
         weights_only=True
     )
 
-    print("\nCheckpoint loaded.")
-
-    # MONAI checkpoint enthält normalerweise "model"
     if "model" in checkpoint:
-        model.load_state_dict(checkpoint["model"])
+        model.load_state_dict(
+            checkpoint["model"]
+        )
     else:
-        model.load_state_dict(checkpoint)
+        model.load_state_dict(
+            checkpoint
+        )
 
     model.eval()
 
-    print("Model loaded on:", next(model.parameters()).device)
+    print(
+        "Model loaded on:",
+        next(
+            model.parameters()
+        ).device
+    )
 
-    # --------------------------------------------------
-    # 6. INFERENCE
-    # --------------------------------------------------
 
-    print("\n========== INFERENCE ==========")
+    # ========================================================
+    # 3. NORMALIZER
+    # ========================================================
 
-    with torch.no_grad():
+    normalizer = NormalizeIntensity(
+        nonzero=True,
+        channel_wise=True
+    )
 
-        prediction = sliding_window_inference(
-            inputs=image_tensor,
-            roi_size=(240, 240, 160),
-            sw_batch_size=1,
-            predictor=model,
-            overlap=0.5
+
+    # ========================================================
+    # 4. FIND PATIENTS
+    # ========================================================
+
+    data_dir = Path(
+        REMOTE_DATA_DIR
+    )
+
+    patient_dirs = sorted(
+        [
+            directory
+            for directory
+            in data_dir.iterdir()
+            if directory.is_dir()
+        ]
+    )
+
+
+    print(
+        f"\nPatients found: "
+        f"{len(patient_dirs)}"
+    )
+
+
+    if not patient_dirs:
+        raise RuntimeError(
+            "No patient directories found."
         )
 
-        prediction = torch.sigmoid(prediction)
 
-    print("Raw prediction shape:", prediction.shape)
-
-    # --------------------------------------------------
-    # 7. THRESHOLD
-    # --------------------------------------------------
-
-    prediction = prediction[0] > 0.5
-
-    print("Binary prediction shape:", prediction.shape)
-
-    # --------------------------------------------------
-    # 8. BRAts LABEL MAP
+    # ========================================================
+    # 5. RESULTS
     #
-    # exakt entsprechend der Bundle inference.json:
+    # We'll return:
     #
-    # channel 2 -> label 4
-    # channel 0 -> label 1
-    # channel 1 -> label 2
-    # --------------------------------------------------
+    # {
+    #     "BRATS_001": bytes,
+    #     "BRATS_002": bytes,
+    #     ...
+    # }
+    # ========================================================
 
-    segmentation = torch.where(
-        prediction[2],
-        4,
-        torch.where(
-            prediction[0],
-            1,
+    results = {}
+
+
+    # ========================================================
+    # 6. PROCESS EVERY PATIENT
+    # ========================================================
+
+    for index, patient_dir in enumerate(
+        patient_dirs,
+        start=1
+    ):
+
+        patient_id = patient_dir.name
+
+        print("\n")
+        print("=" * 70)
+
+        print(
+            f"PATIENT {index}/"
+            f"{len(patient_dirs)}: "
+            f"{patient_id}"
+        )
+
+        print("=" * 70)
+
+
+        # ----------------------------------------------------
+        # MRI paths
+        #
+        # IMPORTANT:
+        # MONAI bundle expects:
+        #
+        # T1ce, T1, T2, FLAIR
+        # ----------------------------------------------------
+
+        paths = [
+            patient_dir / "t1ce.nii.gz",
+            patient_dir / "t1.nii.gz",
+            patient_dir / "t2.nii.gz",
+            patient_dir / "flair.nii.gz",
+        ]
+
+
+        # ----------------------------------------------------
+        # Check required files
+        # ----------------------------------------------------
+
+        missing_files = [
+            path.name
+            for path in paths
+            if not path.exists()
+        ]
+
+
+        if missing_files:
+
+            print(
+                f"[SKIP] Missing files: "
+                f"{missing_files}"
+            )
+
+            continue
+
+
+        # ====================================================
+        # 7. LOAD MRI
+        # ====================================================
+
+        print(
+            "\nLoading MRI modalities..."
+        )
+
+
+        volumes = []
+
+
+        for path in paths:
+
+            img = nib.load(
+                str(path)
+            )
+
+            volume = (
+                img
+                .get_fdata()
+                .astype(np.float32)
+            )
+
+            volumes.append(
+                volume
+            )
+
+            print(
+                f"{path.name}: "
+                f"shape={volume.shape}, "
+                f"min={volume.min():.2f}, "
+                f"max={volume.max():.2f}"
+            )
+
+
+        # ----------------------------------------------------
+        # [4, H, W, D]
+        # ----------------------------------------------------
+
+        image_np = np.stack(
+            volumes,
+            axis=0
+        )
+
+
+        print(
+            "Stacked MRI:",
+            image_np.shape
+        )
+
+
+        # ====================================================
+        # 8. NORMALIZATION
+        # ====================================================
+
+        image_tensor = torch.from_numpy(
+            image_np
+        )
+
+
+        image_tensor = normalizer(
+            image_tensor
+        )
+
+
+        # [4,H,W,D]
+        # ->
+        # [1,4,H,W,D]
+
+        image_tensor = (
+            image_tensor
+            .unsqueeze(0)
+            .to(device)
+        )
+
+
+        print(
+            "Model input:",
+            image_tensor.shape
+        )
+
+
+        # ====================================================
+        # 9. INFERENCE
+        # ====================================================
+
+        print(
+            "\nRunning MONAI inference..."
+        )
+
+
+        with torch.no_grad():
+
+            prediction = (
+                sliding_window_inference(
+                    inputs=image_tensor,
+                    roi_size=(
+                        240,
+                        240,
+                        160
+                    ),
+                    sw_batch_size=1,
+                    predictor=model,
+                    overlap=0.5
+                )
+            )
+
+
+            prediction = torch.sigmoid(
+                prediction
+            )
+
+
+        print(
+            "Raw prediction:",
+            prediction.shape
+        )
+
+
+        # ====================================================
+        # 10. THRESHOLD
+        # ====================================================
+
+        prediction = (
+            prediction[0]
+            > 0.5
+        )
+
+
+        # ====================================================
+        # 11. BRATS LABEL MAP
+        #
+        # Bundle inference.json:
+        #
+        # channel 2 -> label 4
+        # channel 0 -> label 1
+        # channel 1 -> label 2
+        # ====================================================
+
+        segmentation = torch.where(
+            prediction[2],
+            4,
             torch.where(
-                prediction[1],
-                2,
-                0
+                prediction[0],
+                1,
+                torch.where(
+                    prediction[1],
+                    2,
+                    0
+                )
             )
         )
+
+
+        segmentation = (
+            segmentation
+            .cpu()
+            .numpy()
+            .astype(np.uint8)
+        )
+
+
+        # ====================================================
+        # 12. PRINT RESULT
+        # ====================================================
+
+        print(
+            "\nSegmentation:"
+        )
+
+
+        unique, counts = np.unique(
+            segmentation,
+            return_counts=True
+        )
+
+
+        for label, count in zip(
+            unique,
+            counts
+        ):
+
+            print(
+                f"Label {label}: "
+                f"{count} voxels"
+            )
+
+
+        # ====================================================
+        # 13. CREATE NIFTI
+        # ====================================================
+
+        reference = nib.load(
+            str(paths[0])
+        )
+
+
+        result = nib.Nifti1Image(
+            segmentation,
+            reference.affine,
+            reference.header
+        )
+
+
+        output_file = (
+            f"/tmp/"
+            f"{patient_id}_prediction.nii.gz"
+        )
+
+
+        nib.save(
+            result,
+            output_file
+        )
+
+
+        print(
+            "Saved on Modal:",
+            output_file
+        )
+
+
+        # ====================================================
+        # 14. RETURN AS BYTES
+        # ====================================================
+
+        with open(
+            output_file,
+            "rb"
+        ) as file:
+
+            results[patient_id] = (
+                file.read()
+            )
+
+
+        # ----------------------------------------------------
+        # Free GPU memory before next patient
+        # ----------------------------------------------------
+
+        del image_tensor
+        del prediction
+
+        torch.cuda.empty_cache()
+
+
+    # ========================================================
+    # FINISHED
+    # ========================================================
+
+    print("\n")
+    print("=" * 70)
+    print("ALL PATIENTS FINISHED")
+    print("=" * 70)
+
+    print(
+        "Predictions created:",
+        len(results)
     )
 
-    segmentation = segmentation.cpu().numpy().astype(np.uint8)
 
-    print("\n========== RESULT ==========")
-
-    unique, counts = np.unique(
-        segmentation,
-        return_counts=True
-    )
-
-    for label, count in zip(unique, counts):
-        print(f"Label {label}: {count} voxels")
-
-    # --------------------------------------------------
-    # 9. NIFTI ERZEUGEN
-    # --------------------------------------------------
-
-    reference = nib.load(paths[0])
-
-    result = nib.Nifti1Image(
-        segmentation,
-        reference.affine,
-        reference.header
-    )
-
-    # This path exists inside the Modal container
-    output_file = "/tmp/brats_457_prediction.nii.gz"
-
-    nib.save(result, output_file)
-
-    print("\nSaved on Modal:", output_file)
-
-    with open(output_file, "rb") as f:
-        return f.read()
+    return results
 
 
-# --------------------------------------------------
-# LOKALER TEIL
-# --------------------------------------------------
+# ============================================================
+# LOCAL
+# ============================================================
+
 @app.local_entrypoint()
 def main():
 
-    print("Starting MONAI GPU inference...")
+    print(
+        "Starting MONAI batch GPU inference..."
+    )
 
-    # Runs in Modal cloud
-    result = run_inference.remote()
 
-    # This runs locally on your PC
-    output_dir = project_root / "outputs"
-    output_dir.mkdir(parents=True, exist_ok=True)
+    # --------------------------------------------------------
+    # Run remotely
+    # --------------------------------------------------------
 
-    output_file = output_dir / "brats_457_prediction.nii.gz"
+    results = (
+        run_inference.remote()
+    )
 
-    output_file.write_bytes(result)
 
-    print("\n================================")
-    print("DONE!")
-    print("Segmentation saved locally to:")
-    print(output_file)
-    print("================================")
+    # --------------------------------------------------------
+    # Local output directory
+    # --------------------------------------------------------
+
+    output_dir = (
+        project_root
+        / "outputs"
+        / "predictions"
+    )
+
+
+    output_dir.mkdir(
+        parents=True,
+        exist_ok=True
+    )
+
+
+    # --------------------------------------------------------
+    # Save every prediction
+    # --------------------------------------------------------
+
+    for (
+        patient_id,
+        prediction_bytes
+    ) in results.items():
+
+
+        output_file = (
+            output_dir
+            / f"{patient_id}_prediction.nii.gz"
+        )
+
+
+        output_file.write_bytes(
+            prediction_bytes
+        )
+
+
+        print(
+            f"[SAVED] "
+            f"{patient_id} -> "
+            f"{output_file}"
+        )
+
+
+    # --------------------------------------------------------
+    # Summary
+    # --------------------------------------------------------
+
+    print("\n")
+    print("=" * 70)
+
+    print(
+        "BATCH INFERENCE COMPLETE"
+    )
+
+    print("=" * 70)
+
+    print(
+        f"Predictions saved: "
+        f"{len(results)}"
+    )
+
+    print(
+        f"Output directory: "
+        f"{output_dir}"
+    )
