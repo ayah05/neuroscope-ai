@@ -7,15 +7,10 @@ const MAX_FILE_SIZE =
     50 * 1024 * 1024;
 
 
-const SUPPORTED_TYPES = [
-    "image/png",
-    "image/jpeg",
-    "application/dicom"
-];
-
-
+// Browser liefern für .nii.gz keinen verlässlichen MIME-Type,
+// deshalb nur über die Dateiendung prüfen.
 const SUPPORTED_EXTENSIONS =
-    /\.(png|jpe?g|dcm)$/i;
+    /\.nii(\.gz)?$/i;
 
 
 /**
@@ -34,7 +29,6 @@ export function validateFile(file) {
 
 
     const supported =
-        SUPPORTED_TYPES.includes(file.type) ||
         SUPPORTED_EXTENSIONS.test(file.name);
 
 
@@ -43,7 +37,7 @@ export function validateFile(file) {
         return {
             valid: false,
             error:
-                "Please select a PNG, JPG or DICOM file."
+                "Please select a NIfTI scan (.nii or .nii.gz)."
         };
 
     }
@@ -68,14 +62,12 @@ export function validateFile(file) {
 
 
 /**
- * Determine whether file is DICOM.
+ * Determine whether file is a NIfTI scan
+ * (no browser preview possible).
  */
-export function isDicom(file) {
+export function isNifti(file) {
 
-    return (
-        file.type === "application/dicom" ||
-        /\.dcm$/i.test(file.name)
-    );
+    return SUPPORTED_EXTENSIONS.test(file.name);
 }
 
 
@@ -96,7 +88,7 @@ export function formatFileSize(bytes) {
  */
 export function createPreviewURL(file) {
 
-    if (isDicom(file)) {
+    if (isNifti(file)) {
         return null;
     }
 

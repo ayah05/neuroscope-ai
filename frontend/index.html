@@ -189,7 +189,7 @@
                             </strong>
 
                             <p>
-                                PNG, JPG or DICOM · max. 50 MB
+                                4D NIfTI (.nii.gz) with FLAIR, T1, T1ce, T2 · max. 50 MB
                             </p>
 
                         </div>
@@ -207,7 +207,7 @@
                         <input
                             id="fileInput"
                             type="file"
-                            accept="image/png,image/jpeg,.dcm,application/dicom"
+                            accept=".nii,.gz"
                             hidden
                         >
 
@@ -296,12 +296,12 @@
                         >
 
                             <strong>
-                                DICOM selected
+                                NIfTI scan selected
                             </strong>
 
                             <p>
-                                Browser preview is not available.
-                                The file can still be sent for analysis.
+                                The segmented slice will appear here
+                                after the analysis.
                             </p>
 
                         </div>
@@ -315,6 +315,16 @@
                         </span>
 
                     </div>
+
+
+                    <!-- LEGEND (wird nach der Analyse befüllt) -->
+
+                    <ul
+                        class="seg-legend"
+                        id="segLegend"
+                        aria-label="Segmentation legend"
+                        hidden
+                    ></ul>
 
 
                     <!-- ANALYZE -->
@@ -454,6 +464,11 @@
 
 </div>
 
+
+<script>
+    // Backend liefert das Frontend selbst aus (backend/app.py)
+    window.NEUROSCOPE_API_URL = "/api/analyze";
+</script>
 
 <script
     type="module"

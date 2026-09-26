@@ -5,7 +5,7 @@ import {
 
 import {
     validateFile,
-    isDicom,
+    isNifti,
     formatFileSize,
     createPreviewURL,
     releasePreviewURL
@@ -147,6 +147,11 @@ function handleFile(file) {
     );
 
 
+    // Legende gehört zum alten Ergebnis
+    $("segLegend").hidden =
+        true;
+
+
     $("resultTag").textContent =
         "Ready";
 
@@ -161,19 +166,19 @@ function handleFile(file) {
         .remove("active");
 
 
-    const dicom =
-        isDicom(file);
+    const nifti =
+        isNifti(file);
 
 
     updateFileInformation(
         file,
-        dicom
+        nifti
     );
 
 
     updatePreview(
         file,
-        dicom
+        nifti
     );
 
 
@@ -188,7 +193,7 @@ function handleFile(file) {
 
 function updateFileInformation(
     file,
-    dicom
+    nifti
 ) {
 
     $("scanMeta").textContent =
@@ -196,14 +201,14 @@ function updateFileInformation(
 
 
     $("imageTag").textContent =
-        dicom
-            ? "DICOM"
+        nifti
+            ? "NIFTI"
             : getImageType(file);
 
 
     $("viewportLabel").textContent =
-        dicom
-            ? "DICOM · PREVIEW UNAVAILABLE"
+        nifti
+            ? "NIFTI · PREVIEW AFTER ANALYSIS"
             : "MRI PREVIEW · LOCAL";
 }
 
@@ -228,7 +233,7 @@ function getImageType(file) {
 
 function updatePreview(
     file,
-    dicom
+    nifti
 ) {
 
     const image =
@@ -239,7 +244,7 @@ function updatePreview(
         "none";
 
 
-    if (dicom) {
+    if (nifti) {
 
         image.style.display =
             "none";
@@ -302,6 +307,142 @@ function setViewerButtonsEnabled(
 
 
 /* ============================================================
+   SEGMENTATION VIEW
+============================================================ */
+
+function showSegmentation(result) {
+
+    if (!result.overlay_image) {
+        return;
+    }
+
+
+    const image =
+        $("scanImage");
+
+
+    image.src =
+        result.overlay_image;
+
+
+    image.alt =
+        "MRI slice with MONAI tumor segmentation";
+
+
+    image.style.display =
+        "block";
+
+
+    $("dicomMessage").style.display =
+        "none";
+
+
+    $("viewportLabel").textContent =
+        `MONAI SEGMENTATION · AXIAL SLICE ${result.overlay_slice}`;
+
+
+    resetViewerTransform();
+
+
+    setViewerButtonsEnabled(
+        true
+    );
+
+
+    renderLegend(
+        result.legend || []
+    );
+}
+
+
+/**
+ * Legende unter dem Bild. Farben kommen aus dem Backend
+ * (SEGMENTATION_CLASSES), damit Bild und Legende übereinstimmen.
+ */
+function renderLegend(entries) {
+
+    const list =
+        $("segLegend");
+
+
+    list.replaceChildren();
+
+
+    entries.forEach(entry => {
+
+        // nur echte Hex-Farben in style übernehmen
+        const color =
+            /^#[0-9a-f]{6}$/i.test(entry.color)
+                ? entry.color
+                : "#888888";
+
+
+        const item =
+            document.createElement("li");
+
+
+        const swatch =
+            document.createElement("span");
+
+        swatch.className =
+            "seg-swatch";
+
+        swatch.style.background =
+            color;
+
+
+        const text =
+            document.createElement("div");
+
+
+        const name =
+            document.createElement("strong");
+
+        name.textContent =
+            entry.name;
+
+
+        const description =
+            document.createElement("small");
+
+        description.textContent =
+            entry.description;
+
+
+        text.append(
+            name,
+            description
+        );
+
+
+        const volume =
+            document.createElement("span");
+
+        volume.className =
+            "seg-volume";
+
+        volume.textContent =
+            `${Number(entry.volume_ml).toFixed(1)} ml`;
+
+
+        item.append(
+            swatch,
+            text,
+            volume
+        );
+
+
+        list.append(item);
+
+    });
+
+
+    list.hidden =
+        entries.length === 0;
+}
+
+
+/* ============================================================
    ANALYSIS
 ============================================================ */
 
@@ -336,7 +477,8 @@ async function startAnalysis() {
 
 
     renderLoading(
-        $("resultContent")
+        $("resultContent"),
+        state.selectedFile.name
     );
 
 
@@ -363,6 +505,11 @@ async function startAnalysis() {
 
         renderAnalysisResult(
             $("resultContent"),
+            result
+        );
+
+
+        showSegmentation(
             result
         );
 

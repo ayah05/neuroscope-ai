@@ -41,7 +41,13 @@ export async function analyzeMRI(file) {
 
     if (!response.ok) {
 
+        // FastAPI liefert Fehlertexte als {"detail": "..."}
+        const body =
+            await response.json().catch(() => null);
+
+
         throw new Error(
+            body?.detail ||
             `NeuroScope API returned HTTP ${response.status}`
         );
 
