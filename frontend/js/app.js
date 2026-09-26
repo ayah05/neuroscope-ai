@@ -147,6 +147,11 @@ function handleFile(file) {
     );
 
 
+    // Legende gehört zum alten Ergebnis
+    $("segLegend").hidden =
+        true;
+
+
     $("resultTag").textContent =
         "Ready";
 
@@ -342,6 +347,98 @@ function showSegmentation(result) {
     setViewerButtonsEnabled(
         true
     );
+
+
+    renderLegend(
+        result.legend || []
+    );
+}
+
+
+/**
+ * Legende unter dem Bild. Farben kommen aus dem Backend
+ * (SEGMENTATION_CLASSES), damit Bild und Legende übereinstimmen.
+ */
+function renderLegend(entries) {
+
+    const list =
+        $("segLegend");
+
+
+    list.replaceChildren();
+
+
+    entries.forEach(entry => {
+
+        // nur echte Hex-Farben in style übernehmen
+        const color =
+            /^#[0-9a-f]{6}$/i.test(entry.color)
+                ? entry.color
+                : "#888888";
+
+
+        const item =
+            document.createElement("li");
+
+
+        const swatch =
+            document.createElement("span");
+
+        swatch.className =
+            "seg-swatch";
+
+        swatch.style.background =
+            color;
+
+
+        const text =
+            document.createElement("div");
+
+
+        const name =
+            document.createElement("strong");
+
+        name.textContent =
+            entry.name;
+
+
+        const description =
+            document.createElement("small");
+
+        description.textContent =
+            entry.description;
+
+
+        text.append(
+            name,
+            description
+        );
+
+
+        const volume =
+            document.createElement("span");
+
+        volume.className =
+            "seg-volume";
+
+        volume.textContent =
+            `${Number(entry.volume_ml).toFixed(1)} ml`;
+
+
+        item.append(
+            swatch,
+            text,
+            volume
+        );
+
+
+        list.append(item);
+
+    });
+
+
+    list.hidden =
+        entries.length === 0;
 }
 
 
@@ -380,7 +477,8 @@ async function startAnalysis() {
 
 
     renderLoading(
-        $("resultContent")
+        $("resultContent"),
+        state.selectedFile.name
     );
 
 

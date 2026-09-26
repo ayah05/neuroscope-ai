@@ -704,6 +704,104 @@ button:disabled {
 }
 
 
+/* SEGMENTATION LEGEND (unter dem MRI-Bild) */
+
+.seg-legend {
+    margin: -6px 18px 18px;
+
+    padding: 4px 12px;
+
+    list-style: none;
+
+    border: 1px solid var(--border);
+
+    border-radius: 10px;
+
+    background: var(--background);
+}
+
+
+.seg-legend[hidden] {
+    display: none;
+}
+
+
+.seg-legend li {
+    display: flex;
+    align-items: center;
+
+    gap: 12px;
+
+    padding: 8px 0;
+}
+
+
+.seg-legend li + li {
+    border-top: 1px solid var(--border);
+}
+
+
+.seg-swatch {
+    flex: none;
+
+    width: 14px;
+    height: 14px;
+
+    border-radius: 4px;
+}
+
+
+.seg-legend div {
+    flex: 1;
+
+    min-width: 0;
+}
+
+
+.seg-legend strong {
+    display: block;
+
+    font-size: 12px;
+}
+
+
+.seg-legend small {
+    display: block;
+
+    color: var(--muted);
+
+    font-size: 11px;
+}
+
+
+.seg-volume {
+    color: var(--primary);
+
+    font-size: 12px;
+
+    font-weight: 700;
+
+    white-space: nowrap;
+}
+
+
+/* Viewer bleibt beim Scrollen durch den Bericht sichtbar.
+   Ist er höher als das Fenster, scrollt er in sich selbst. */
+@media (min-width: 901px) {
+
+    .viewer {
+        position: sticky;
+
+        top: 16px;
+
+        max-height: calc(100vh - 32px);
+
+        overflow-y: auto;
+    }
+
+}
+
+
 .result-content {
     padding: 20px;
 }
@@ -853,12 +951,262 @@ button:disabled {
 }
 
 
-/* CLINICAL REPORT (HTML aus backend/app.py) */
+/* RESULT TABS */
 
-.report-label {
-    margin-top: 22px;
+.tabs {
+    display: flex;
+
+    gap: 4px;
+
+    margin: 18px 0 16px;
+
+    padding: 4px;
+
+    border: 1px solid var(--border);
+
+    border-radius: 10px;
+
+    background: var(--background);
 }
 
+
+.tab {
+    flex: 1;
+
+    padding: 8px 10px;
+
+    border: 0;
+
+    border-radius: 7px;
+
+    background: transparent;
+
+    color: var(--muted);
+
+    font-size: 12px;
+
+    font-weight: 600;
+
+    cursor: pointer;
+}
+
+
+.tab:hover {
+    color: var(--text);
+}
+
+
+.tab.active {
+    background: var(--surface-light);
+
+    color: var(--primary);
+}
+
+
+.tab:focus-visible {
+    outline: 2px solid var(--primary);
+
+    outline-offset: 1px;
+}
+
+
+.tab-panel[hidden] {
+    display: none;
+}
+
+
+.result-disclaimer {
+    margin-top: 20px;
+
+    color: #8199a2;
+
+    font-size: 11px;
+
+    line-height: 1.5;
+}
+
+
+/* OVERVIEW TAB */
+
+/* doppelte Klasse, weil .section-label weiter unten margin überschreibt */
+.section-label.overview-label {
+    margin-top: 24px;
+}
+
+
+.overview-text {
+    margin: 0;
+
+    color: var(--text);
+
+    font-size: 13px;
+
+    line-height: 1.55;
+}
+
+
+.consideration-card {
+    margin-top: 14px;
+
+    padding: 14px 15px;
+
+    border: 1px solid #35616b;
+
+    border-radius: 10px;
+
+    background: #1b3540;
+}
+
+
+.consideration-card span {
+    display: block;
+
+    color: #91a8af;
+
+    font-size: 10px;
+
+    text-transform: uppercase;
+}
+
+
+.consideration-card strong {
+    display: block;
+
+    margin: 6px 0;
+
+    color: var(--primary);
+
+    font-size: 15px;
+}
+
+
+.consideration-card p {
+    margin: 0;
+
+    color: var(--muted);
+
+    font-size: 12px;
+
+    line-height: 1.5;
+}
+
+
+.next-steps {
+    margin: 0;
+
+    padding-left: 18px;
+
+    color: var(--text);
+
+    font-size: 12px;
+
+    line-height: 1.55;
+}
+
+
+.next-steps li + li {
+    margin-top: 6px;
+}
+
+
+.overview-hint {
+    margin: 18px 0 0;
+
+    color: var(--muted);
+
+    font-size: 12px;
+}
+
+
+/* EVIDENCE TAB */
+
+.evidence-list {
+    margin: 16px 0 0;
+
+    padding: 0;
+
+    list-style: none;
+}
+
+
+.evidence-item {
+    display: flex;
+
+    gap: 12px;
+
+    padding: 12px 0;
+
+    border-bottom: 1px solid var(--border);
+}
+
+
+.evidence-number {
+    flex: none;
+
+    width: 24px;
+    height: 24px;
+
+    display: grid;
+    place-items: center;
+
+    border-radius: 6px;
+
+    background: #242535;
+
+    color: var(--purple);
+
+    font-size: 11px;
+
+    font-weight: 700;
+}
+
+
+.evidence-item strong {
+    display: block;
+
+    font-size: 12px;
+
+    line-height: 1.4;
+}
+
+
+.evidence-item a {
+    color: var(--text);
+
+    text-decoration: none;
+}
+
+
+.evidence-item a:hover {
+    color: var(--purple);
+
+    text-decoration: underline;
+}
+
+
+.evidence-item small {
+    display: block;
+
+    margin-top: 3px;
+
+    color: var(--purple);
+
+    font-size: 11px;
+}
+
+
+.evidence-item p {
+    margin: 6px 0 0;
+
+    color: var(--muted);
+
+    font-size: 11px;
+
+    line-height: 1.5;
+}
+
+
+/* CLINICAL REPORT (HTML aus backend/app.py) */
 
 .report {
     padding: 15px;
@@ -1054,11 +1402,141 @@ button:disabled {
 
 
 .loading {
-    padding: 40px;
+    padding: 28px 8px 12px;
+}
 
-    text-align: center;
 
+.loading-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+
+    gap: 12px;
+
+    margin-bottom: 18px;
+}
+
+
+.loading-header strong {
+    min-width: 0;
+
+    overflow: hidden;
+
+    text-overflow: ellipsis;
+
+    white-space: nowrap;
+
+    font-size: 15px;
+}
+
+
+.loading-time {
+    color: var(--muted);
+
+    font-size: 13px;
+
+    font-variant-numeric: tabular-nums;
+}
+
+
+.loading-steps {
+    margin: 0;
+
+    padding: 0;
+
+    list-style: none;
+}
+
+
+.loading-step {
+    display: flex;
+    align-items: center;
+
+    gap: 12px;
+
+    padding: 11px 0;
+
+    color: var(--muted);
+
+    font-size: 13px;
+}
+
+
+.loading-step + .loading-step {
+    border-top: 1px solid var(--border);
+}
+
+
+.loading-name {
+    flex: 1;
+}
+
+
+.loading-step small {
+    color: #6f848c;
+
+    font-size: 11px;
+}
+
+
+.loading-marker {
+    flex: none;
+
+    width: 18px;
+    height: 18px;
+
+    display: grid;
+    place-items: center;
+
+    border: 2px solid #3a4b57;
+
+    border-radius: 50%;
+
+    font-size: 10px;
+
+    font-weight: 900;
+}
+
+
+.loading-step.done {
+    color: var(--text);
+}
+
+
+.loading-step.done .loading-marker {
+    border-color: var(--primary);
+
+    background: var(--primary);
+
+    color: var(--background);
+}
+
+
+.loading-step.active {
     color: var(--primary);
+
+    font-weight: 600;
+}
+
+
+/* aktiver Schritt: Spinner-Ring (Animation "spin" siehe .spinner) */
+.loading-step.active .loading-marker {
+    border-color: #41606a;
+    border-top-color: var(--primary);
+
+    animation:
+        spin 0.7s linear infinite;
+}
+
+
+.loading-hint {
+    margin: 16px 0 0;
+
+    color: var(--muted);
+
+    font-size: 12px;
+
+    line-height: 1.5;
 }
 
 

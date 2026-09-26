@@ -24,6 +24,7 @@ import nibabel as nib
 import numpy as np
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.staticfiles import StaticFiles
+from matplotlib.colors import to_rgb
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
@@ -34,7 +35,8 @@ ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT / "ml"))
 
 from tumor_features import compute_features  # noqa: E402
-from report import generate_report  # noqa: E402
+from llm_report import generate_clinical_report  # noqa: E402
+from amass_client import AmassError, get_research  # noqa: E402
 
 
 MODAL_APP = "neuroscope-monai"
@@ -42,6 +44,34 @@ MODAL_FUNCTION = "segment"
 
 # MSD-Kanalreihenfolge im hochgeladenen 4D-Scan
 FLAIR_CHANNEL = 0
+
+# Farben der Segmentierung (Okabe-Ito, auch bei Farbenblindheit
+# unterscheidbar). Einzige Quelle für Bild UND Legende im Frontend.
+SEGMENTATION_CLASSES = [
+    {
+        "label": 2,
+        "name": "Edema",
+        "description": "Peritumoral swelling (bright on T2/FLAIR)",
+        "color": "#56B4E9",
+        "volume_key": "edema_volume_ml",
+    },
+    {
+        "label": 1,
+        "name": "Non-enhancing tumor / necrosis",
+        "description": "Tumor core without contrast uptake",
+        "color": "#F0E442",
+        "volume_key": None,  # = Tumorkern - enhancing, siehe legend()
+    },
+    {
+        "label": 4,
+        "name": "Enhancing tumor",
+        "description": "Contrast-enhancing tissue (bright on T1ce)",
+        "color": "#D55E00",
+        "volume_key": "enhancing_tumor_volume_ml",
+    },
+]
+
+OVERLAY_ALPHA = 0.6
 
 
 app = FastAPI(title="NeuroScope API")
@@ -78,6 +108,67 @@ def load_scan(path):
     return scan
 
 
+def load_research(features):
+    """
+    Amass-Literatur + Studien. Ein Amass-Ausfall (ohne Cache) soll die
+    Analyse nicht abbrechen -> dann einfach ohne Literatur.
+    """
+
+    try:
+        return get_research(features)
+    except AmassError as error:
+        print(f"Amass unavailable, continuing without research: {error}")
+        return None
+
+
+def research_card(research):
+    """Format für die Research-Evidence-Karte im Frontend (results.js)."""
+
+    if research is None:
+        return None
+
+    papers = len(research["papers"])
+    trials = len(research["trials"])
+
+    summary = (
+        f"{papers} peer-reviewed papers and {trials} recruiting clinical "
+        f"trials matched the findings ({', '.join(research['query_terms'])}). "
+        f"See the report for details."
+    )
+
+    if research.get("source") == "cache":
+        summary += " Amass was not reachable; showing cached results."
+
+    return {"summary": summary, "papers": papers, "trials": trials}
+
+
+def legend(features):
+    """Legende fürs Frontend: Farbe, Name, Beschreibung, Volumen."""
+
+    seg = features["segmentation"]
+
+    entries = []
+
+    for cls in SEGMENTATION_CLASSES:
+
+        if cls["volume_key"]:
+            volume = seg[cls["volume_key"]]
+        else:
+            volume = round(
+                seg["tumor_core_volume_ml"] - seg["enhancing_tumor_volume_ml"],
+                2
+            )
+
+        entries.append({
+            "name": cls["name"],
+            "description": cls["description"],
+            "color": cls["color"],
+            "volume_ml": volume,
+        })
+
+    return entries
+
+
 def render_overlay(flair, segmentation):
     """
     Axiale Schicht mit dem meisten Tumor: FLAIR + farbige Segmentierung.
@@ -92,18 +183,18 @@ def render_overlay(flair, segmentation):
 
     mask = segmentation[:, :, slice_idx].T
 
+    # Label -> RGBA, feste Farben aus SEGMENTATION_CLASSES
+    overlay = np.zeros(mask.shape + (4,))
+
+    for cls in SEGMENTATION_CLASSES:
+        rgb = to_rgb(cls["color"])
+        overlay[mask == cls["label"]] = (*rgb, OVERLAY_ALPHA)
+
     fig, ax = plt.subplots(figsize=(5, 5), dpi=120)
 
     ax.imshow(background, cmap="gray", origin="lower")
 
-    ax.imshow(
-        np.ma.masked_where(mask == 0, mask),
-        cmap="jet",
-        alpha=0.55,
-        origin="lower",
-        vmin=1,
-        vmax=4
-    )
+    ax.imshow(overlay, origin="lower", interpolation="nearest")
 
     ax.axis("off")
 
@@ -134,9 +225,21 @@ def analyze(image: UploadFile = File(...)):
                          "enhancing_tumor_ml": 3.2, "edema_ml": 70.5},
         "features": {...},        # kompletter Output von compute_features()
         "report_html": "<h1>...", # Befundbericht
+        "report_source": "llm",   # "fallback", wenn das LLM nicht erreichbar
+        "overview": {             # Kurzfassung für den Overview-Tab,
+            "summary": "...",     # None beim Fallback
+            "primary_consideration": "...",
+            "primary_evidence": "...",
+            "next_steps": ["..."]
+        },
+        "evidence": [{"number": 1, "kind": "paper", "title": "...",
+                      "url": "https://...", "meta": "...", "summary": "..."}],
         "overlay_image": "data:image/png;base64,...",
         "overlay_slice": 77,
-        "research": None          # folgt mit der Amass-Integration
+        "legend": [{"name": "Edema", "description": "...",
+                    "color": "#56B4E9", "volume_ml": 70.53}, ...],
+        "research": {"summary": "...", "papers": 5, "trials": 3}
+                                  # None, wenn Amass nicht erreichbar
     }
     """
 
@@ -173,12 +276,14 @@ def analyze(image: UploadFile = File(...)):
         prediction_path.write_bytes(prediction_bytes)
 
         # ------------------------------------------------------
-        # 2. KENNZAHLEN + BERICHT
+        # 2. KENNZAHLEN + LITERATUR (Amass) + BERICHT (LLM über Groq)
         # ------------------------------------------------------
 
         features = compute_features(prediction_path, patient_id)
 
-        report_markdown = generate_report(features)
+        research = load_research(features)
+
+        report = generate_clinical_report(features, research)
 
         # ------------------------------------------------------
         # 3. BILD FÜR DEN VIEWER
@@ -204,12 +309,16 @@ def analyze(image: UploadFile = File(...)):
         },
         "features": features,
         "report_html": markdown.markdown(
-            report_markdown,
+            report["markdown"],
             extensions=["tables"]
         ),
+        "report_source": report["source"],
+        "overview": report["overview"],
+        "evidence": report["evidence"],
         "overlay_image": overlay_image,
         "overlay_slice": overlay_slice,
-        "research": None
+        "legend": legend(features),
+        "research": research_card(research)
     }
 
 
