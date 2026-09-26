@@ -7,7 +7,7 @@ from tqdm import tqdm
 # CONFIG
 # ============================================================
 
-DOWNLOAD_DIR = Path("ml/data/lumiere")
+DOWNLOAD_DIR = Path("data/lumiere")
 DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 # Figshare article containing the MRI data + segmentations
