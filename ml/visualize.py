@@ -23,6 +23,11 @@ flair = nib.load(DATA / "patient_flair.nii.gz").get_fdata()
 prediction = nib.load(PREDICTION).get_fdata()
 ground_truth = nib.load(DATA / "ground_truth.nii.gz").get_fdata()
 
+# MSD-Labels (1=Ödem, 2=nicht-anreichernd, 3=anreichernd) auf das
+# BraTS-Schema der Prediction umrechnen (2=Ödem, 1=nicht-anreichernd, 4=anreichernd)
+MSD_TO_BRATS = np.array([0, 2, 1, 4])
+ground_truth = MSD_TO_BRATS[ground_truth.astype(np.uint8)]
+
 
 print("\n========== SHAPES ==========")
 
