@@ -12,6 +12,7 @@ Voraussetzung: Modal-App ist deployed
 
 from pathlib import Path
 import base64
+import gzip
 import io
 import re
 import sys
@@ -77,16 +78,141 @@ OVERLAY_ALPHA = 0.6
 app = FastAPI(title="NeuroScope API")
 
 
+@app.middleware("http")
+async def no_stale_frontend(request, call_next):
+    """
+    Browser sollen Frontend-Dateien vor jeder Nutzung neu prüfen (ETag),
+    sonst läuft nach einem Update altes JavaScript gegen das neue Backend.
+    """
+
+    response = await call_next(request)
+
+    if not request.url.path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-cache"
+
+    return response
+
+
 # ============================================================
 # HELPERS
 # ============================================================
 
-def patient_id_from_filename(filename):
-    """BRATS_457.nii.gz -> BRATS_457 (nur sichere Zeichen)."""
+NIFTI_SUFFIX = re.compile(r"\.nii(\.gz)?$", flags=re.IGNORECASE)
 
-    stem = re.sub(r"\.nii(\.gz)?$", "", filename, flags=re.IGNORECASE)
+# Reihenfolge wichtig: t1ce vor t1 prüfen, sonst wird t1ce als t1 erkannt
+SEQUENCE_PATTERNS = [
+    ("t1ce", re.compile(r"t1[-_]?(ce|c|gd|post|contrast)", re.IGNORECASE)),
+    ("flair", re.compile(r"flair", re.IGNORECASE)),
+    ("t2", re.compile(r"t2", re.IGNORECASE)),
+    ("t1", re.compile(r"t1", re.IGNORECASE)),
+]
 
-    return re.sub(r"[^A-Za-z0-9_-]", "", stem) or "MRI scan"
+# MSD-Kanalreihenfolge, die segment() auf Modal erwartet
+MSD_ORDER = ["flair", "t1", "t1ce", "t2"]
+
+
+def safe_id(text):
+    """Nur sichere Zeichen für die Patienten-ID."""
+
+    return re.sub(r"[^A-Za-z0-9_-]", "", text).strip("_-") or "MRI scan"
+
+
+def patient_id_from_filenames(filenames):
+    """
+    BRATS_457.nii.gz                        -> BRATS_457
+    patient_flair.nii.gz, patient_t1.nii.gz -> patient (gemeinsamer Anfang)
+    """
+
+    stems = [NIFTI_SUFFIX.sub("", name) for name in filenames]
+
+    if len(stems) == 1:
+        return safe_id(stems[0])
+
+    prefix = stems[0]
+
+    for stem in stems[1:]:
+        while not stem.startswith(prefix):
+            prefix = prefix[:-1]
+
+    return safe_id(prefix)
+
+
+def detect_sequence(filename):
+
+    stem = NIFTI_SUFFIX.sub("", filename)
+
+    for name, pattern in SEQUENCE_PATTERNS:
+        if pattern.search(stem):
+            return name
+
+    return None
+
+
+def combine_sequences(uploads, tmp):
+    """
+    Vier einzelne 3D-Sequenzen -> ein 4D-Scan im MSD-Format
+    [H, W, D, 4] mit Kanälen FLAIR, T1, T1ce, T2.
+    Output: Pfad zur kombinierten .nii.gz
+    """
+
+    volumes = {}
+
+    reference = None
+
+    for upload in uploads:
+
+        name = upload.filename or ""
+
+        sequence = detect_sequence(name)
+
+        if sequence is None:
+            raise HTTPException(
+                400,
+                f"Could not tell which sequence '{name}' is. File names must "
+                f"contain flair, t1, t1ce or t2."
+            )
+
+        if sequence in volumes:
+            raise HTTPException(
+                400,
+                f"Two files were detected as {sequence.upper()}. Please "
+                f"select exactly one file each for FLAIR, T1, T1ce and T2."
+            )
+
+        path = Path(tmp) / f"{sequence}{NIFTI_SUFFIX.search(name).group(0)}"
+        path.write_bytes(upload.file.read())
+
+        try:
+            img = nib.load(path)
+            data = np.asarray(img.dataobj, dtype=np.float32)
+        except Exception:
+            raise HTTPException(400, f"'{name}' is not a readable NIfTI scan.")
+
+        if data.ndim != 3:
+            raise HTTPException(
+                400,
+                f"'{name}' should be a single 3D sequence, got shape "
+                f"{data.shape}."
+            )
+
+        if reference is not None and data.shape != reference.shape:
+            raise HTTPException(
+                400,
+                f"The sequences have different sizes ({reference.shape} vs "
+                f"{data.shape}); they must come from the same scan."
+            )
+
+        reference = reference if reference is not None else img
+
+        volumes[sequence] = data
+
+    combined = np.stack([volumes[s] for s in MSD_ORDER], axis=-1)
+
+    combined_path = Path(tmp) / "scan.nii.gz"
+
+    nib.save(nib.Nifti1Image(combined, reference.affine), combined_path)
+
+    return combined_path
 
 
 def load_scan(path):
@@ -97,6 +223,13 @@ def load_scan(path):
         shape = scan.shape
     except Exception:
         raise HTTPException(400, "The file is not a readable NIfTI scan.")
+
+    if len(shape) == 3:
+        raise HTTPException(
+            400,
+            "This file contains only one MRI sequence. Select all 4 sequence "
+            "files (FLAIR, T1, T1ce, T2) together, or one combined 4D scan."
+        )
 
     if len(shape) != 4 or shape[3] != 4:
         raise HTTPException(
@@ -216,9 +349,11 @@ def render_overlay(flair, segmentation):
 # ============================================================
 
 @app.post("/api/analyze")
-def analyze(image: UploadFile = File(...)):
+def analyze(images: list[UploadFile] = File(...)):
     """
-    Input:  multipart-Feld "image" mit 4D-NIfTI (.nii / .nii.gz)
+    Input:  multipart-Feld "images" mit entweder
+            - einem 4D-NIfTI (FLAIR, T1, T1ce, T2 in einer Datei), oder
+            - vier 3D-NIfTIs, eins pro Sequenz (Name enthält flair/t1/t1ce/t2)
     Output: {
         "patient_id": "BRATS_457",
         "segmentation": {"whole_tumor_ml": 73.8, "tumor_core_ml": 3.3,
@@ -243,21 +378,41 @@ def analyze(image: UploadFile = File(...)):
     }
     """
 
-    filename = image.filename or ""
+    filenames = [upload.filename or "" for upload in images]
 
-    if not re.search(r"\.nii(\.gz)?$", filename, flags=re.IGNORECASE):
-        raise HTTPException(400, "Please upload a NIfTI scan (.nii or .nii.gz).")
+    if not all(NIFTI_SUFFIX.search(name) for name in filenames):
+        raise HTTPException(400, "Please upload NIfTI files (.nii or .nii.gz).")
 
-    patient_id = patient_id_from_filename(filename)
+    if len(images) not in (1, 4):
+        raise HTTPException(
+            400,
+            f"Please upload either one 4D scan or the 4 sequence files "
+            f"(FLAIR, T1, T1ce, T2) – got {len(images)} files."
+        )
 
-    scan_bytes = image.file.read()
+    patient_id = patient_id_from_filenames(filenames)
 
     with tempfile.TemporaryDirectory() as tmp:
 
-        scan_path = Path(tmp) / "scan.nii.gz"
-        scan_path.write_bytes(scan_bytes)
+        if len(images) == 4:
+
+            scan_path = combine_sequences(images, tmp)
+
+        else:
+
+            # Endung beibehalten: .nii ist nicht gzip-komprimiert
+            suffix = NIFTI_SUFFIX.search(filenames[0]).group(0).lower()
+
+            scan_path = Path(tmp) / f"scan{suffix}"
+            scan_path.write_bytes(images[0].file.read())
 
         scan = load_scan(scan_path)
+
+        scan_bytes = scan_path.read_bytes()
+
+        # segment() auf Modal liest immer .nii.gz
+        if scan_path.suffix.lower() == ".nii":
+            scan_bytes = gzip.compress(scan_bytes)
 
         # ------------------------------------------------------
         # 1. SEGMENTIERUNG AUF MODAL

@@ -3,7 +3,7 @@
  */
 
 
-function escapeHTML(value) {
+export function escapeHTML(value) {
 
     return String(value ?? "")
         .replace(

@@ -57,7 +57,19 @@
                 Workspace
             </p>
 
-            <button class="nav-item active">
+            <button
+                class="nav-item active"
+                id="navPatients"
+                type="button"
+            >
+                Patients
+            </button>
+
+            <button
+                class="nav-item"
+                id="navAnalysis"
+                type="button"
+            >
                 MRI Analysis
             </button>
 
@@ -90,10 +102,13 @@
 
         <header class="topbar">
 
-            <div class="breadcrumb">
+            <div
+                class="breadcrumb"
+                id="breadcrumb"
+            >
                 Workspace
                 <span>/</span>
-                MRI Analysis
+                Patients
             </div>
 
             <div class="status">
@@ -105,6 +120,80 @@
 
 
         <div class="content">
+
+            <!-- =================================================
+                 PATIENTS VIEW
+            ================================================== -->
+
+            <div id="patientsView">
+
+                <header class="page-heading">
+
+                    <div>
+
+                        <p class="eyebrow">
+                            PATIENT RECORDS
+                        </p>
+
+                        <h1>
+                            Patients
+                        </h1>
+
+                        <p class="subtitle">
+                            Select a patient to review their history
+                            and analyze a new MRI scan.
+                        </p>
+
+                    </div>
+
+                    <span class="tag demo-tag">
+                        Demo data
+                    </span>
+
+                </header>
+
+
+                <section class="panel patient-panel">
+
+                    <div class="patient-toolbar">
+
+                        <input
+                            id="patientSearch"
+                            class="patient-search"
+                            type="search"
+                            placeholder="Search by name, ID or complaint"
+                            aria-label="Search patients"
+                        >
+
+                        <button
+                            class="secondary-button"
+                            id="noPatientBtn"
+                            type="button"
+                        >
+                            Analyze without patient
+                        </button>
+
+                    </div>
+
+
+                    <ul
+                        class="patient-list"
+                        id="patientList"
+                    ></ul>
+
+                </section>
+
+            </div>
+
+
+            <!-- =================================================
+                 ANALYSIS VIEW
+            ================================================== -->
+
+            <div
+                id="analysisView"
+                hidden
+            >
 
             <!-- PAGE HEADING -->
 
@@ -133,6 +222,14 @@
                 </div>
 
             </header>
+
+
+            <!-- PATIENT CONTEXT (wird in app.js befüllt) -->
+
+            <section
+                class="panel patient-context"
+                id="patientContext"
+            ></section>
 
 
             <!-- =================================================
@@ -185,11 +282,12 @@
                         <div class="upload-copy">
 
                             <strong>
-                                Drop MRI here or select a file
+                                Drop MRI here or select files
                             </strong>
 
                             <p>
-                                4D NIfTI (.nii.gz) with FLAIR, T1, T1ce, T2 · max. 50 MB
+                                The 4 sequences FLAIR, T1, T1ce, T2 as separate
+                                files, or one combined 4D file · NIfTI (.nii.gz)
                             </p>
 
                         </div>
@@ -200,7 +298,7 @@
                             id="chooseBtn"
                             type="button"
                         >
-                            Select file
+                            Select files
                         </button>
 
 
@@ -208,6 +306,7 @@
                             id="fileInput"
                             type="file"
                             accept=".nii,.gz"
+                            multiple
                             hidden
                         >
 
@@ -457,6 +556,9 @@
                 </section>
 
             </div>
+
+            </div>
+            <!-- /ANALYSIS VIEW -->
 
         </div>
 

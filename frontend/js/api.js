@@ -11,9 +11,12 @@ const API_BASE_URL =
 
 
 /**
- * Sends an MRI file to the NeuroScope backend.
+ * Sends MRI files to the NeuroScope backend:
+ * one 4D scan, or the 4 sequence files (FLAIR, T1, T1ce, T2).
+ * patientId (optional) verknüpft die Analyse mit dem Patienten;
+ * das Backend nutzt ihn noch nicht (Anbindung an Patientendaten folgt).
  */
-export async function analyzeMRI(file) {
+export async function analyzeMRI(files, patientId = null) {
 
     if (!API_BASE_URL) {
         throw new Error(
@@ -24,10 +27,24 @@ export async function analyzeMRI(file) {
 
     const formData = new FormData();
 
-    formData.append(
-        "image",
-        file
-    );
+    files.forEach(file => {
+
+        formData.append(
+            "images",
+            file
+        );
+
+    });
+
+
+    if (patientId) {
+
+        formData.append(
+            "patient_id",
+            patientId
+        );
+
+    }
 
 
     const response = await fetch(
@@ -41,13 +58,22 @@ export async function analyzeMRI(file) {
 
     if (!response.ok) {
 
-        // FastAPI liefert Fehlertexte als {"detail": "..."}
+        // FastAPI liefert Fehlertexte als {"detail": "..."},
+        // Validierungsfehler (422) als {"detail": [{"msg": ...}, ...]}
         const body =
             await response.json().catch(() => null);
 
 
+        const detail =
+            Array.isArray(body?.detail)
+                ? body.detail
+                    .map(item => item.msg)
+                    .join("; ")
+                : body?.detail;
+
+
         throw new Error(
-            body?.detail ||
+            detail ||
             `NeuroScope API returned HTTP ${response.status}`
         );
 

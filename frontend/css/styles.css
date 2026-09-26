@@ -165,6 +165,467 @@ button:disabled {
 }
 
 
+.nav-item {
+    cursor: pointer;
+}
+
+
+.nav-item + .nav-item {
+    margin-top: 4px;
+}
+
+
+.nav-item:not(.active):hover {
+    background: #16232d;
+
+    color: var(--text);
+}
+
+
+/* ============================================================
+   PATIENTS VIEW
+============================================================ */
+
+/* doppelte Klasse, weil .tag weiter unten die Farben setzt */
+.tag.demo-tag {
+    align-self: center;
+
+    border-color: #6b5a33;
+
+    background: #3a3222;
+
+    color: var(--warning);
+}
+
+
+.patient-toolbar {
+    display: flex;
+    align-items: center;
+
+    gap: 12px;
+
+    padding: 16px 18px;
+
+    border-bottom: 1px solid var(--border);
+}
+
+
+.patient-search {
+    flex: 1;
+
+    min-width: 0;
+
+    padding: 10px 13px;
+
+    border: 1px solid var(--border);
+
+    border-radius: 9px;
+
+    background: var(--background);
+
+    color: var(--text);
+}
+
+
+.patient-search:focus {
+    outline: 2px solid var(--primary);
+
+    outline-offset: 1px;
+}
+
+
+.patient-list {
+    margin: 0;
+
+    padding: 6px;
+
+    list-style: none;
+}
+
+
+.patient-row {
+    width: 100%;
+
+    display: grid;
+    grid-template-columns:
+        auto
+        minmax(160px, 1.1fr)
+        minmax(0, 2fr)
+        auto
+        auto;
+    align-items: center;
+
+    gap: 16px;
+
+    padding: 14px 12px;
+
+    border: 1px solid transparent;
+
+    border-radius: 12px;
+
+    background: transparent;
+
+    color: var(--text);
+
+    text-align: left;
+
+    cursor: pointer;
+}
+
+
+.patient-row:hover {
+    border-color: var(--border);
+
+    background: var(--surface-light);
+}
+
+
+.patient-row:focus-visible {
+    outline: 2px solid var(--primary);
+
+    outline-offset: 1px;
+}
+
+
+.patient-list li + li .patient-row {
+    border-top-color: var(--border);
+
+    border-top-left-radius: 0;
+    border-top-right-radius: 0;
+}
+
+
+.patient-avatar {
+    width: 38px;
+    height: 38px;
+
+    display: grid;
+    place-items: center;
+
+    border-radius: 50%;
+
+    background: #1b3540;
+
+    color: var(--primary);
+
+    font-size: 13px;
+
+    font-weight: 800;
+}
+
+
+.patient-avatar.large {
+    width: 48px;
+    height: 48px;
+
+    font-size: 15px;
+}
+
+
+.patient-main small {
+    display: block;
+}
+
+
+.patient-name-line {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+
+    gap: 6px 8px;
+}
+
+
+.patient-name-line strong {
+    font-size: 15px;
+}
+
+
+/* Alter + Geschlecht: bewusst groß und kontrastreich */
+.demo-chip {
+    padding: 3px 9px;
+
+    border: 1px solid #35616b;
+
+    border-radius: 999px;
+
+    background: #1b3540;
+
+    color: var(--text);
+
+    font-size: 13px;
+
+    font-weight: 700;
+
+    white-space: nowrap;
+}
+
+
+.patient-main small,
+.patient-meta small {
+    margin-top: 3px;
+
+    color: var(--muted);
+
+    font-size: 12px;
+}
+
+
+.patient-complaint {
+    overflow: hidden;
+
+    color: var(--muted);
+
+    font-size: 13px;
+
+    text-overflow: ellipsis;
+
+    white-space: nowrap;
+}
+
+
+.patient-meta {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+}
+
+
+.patient-status {
+    padding: 4px 8px;
+
+    border-radius: 999px;
+
+    background: var(--surface-light);
+
+    color: var(--muted);
+
+    font-size: 11px;
+
+    font-weight: 700;
+
+    white-space: nowrap;
+}
+
+
+.patient-status.status-awaiting {
+    background: #3a3222;
+
+    color: var(--warning);
+}
+
+
+.patient-status.status-analyzed {
+    background: #1b3540;
+
+    color: var(--primary);
+}
+
+
+.patient-status.status-followup {
+    background: #2a2840;
+
+    color: var(--purple);
+}
+
+
+.patient-chevron {
+    color: var(--muted);
+
+    font-size: 22px;
+}
+
+
+.patient-empty {
+    padding: 30px;
+
+    color: var(--muted);
+
+    text-align: center;
+}
+
+
+/* PATIENT CONTEXT (über der MRI-Analyse) */
+
+.patient-context {
+    margin-bottom: 18px;
+
+    padding: 18px 20px;
+}
+
+
+.context-header {
+    display: flex;
+    align-items: center;
+
+    gap: 14px;
+}
+
+
+.context-title {
+    flex: 1;
+
+    min-width: 0;
+}
+
+
+.context-title h2 {
+    margin: 2px 0;
+
+    font-size: 20px;
+}
+
+
+.context-title .demo-chip {
+    padding: 4px 11px;
+
+    font-size: 14px;
+}
+
+
+.context-title small {
+    color: var(--muted);
+
+    font-size: 12px;
+}
+
+
+.context-header .secondary-button {
+    margin-left: 0;
+}
+
+
+.context-complaint {
+    margin: 16px 0 0;
+
+    padding: 11px 13px;
+
+    border-left: 3px solid var(--primary);
+
+    border-radius: 6px;
+
+    background: var(--surface-light);
+
+    font-size: 13px;
+
+    line-height: 1.5;
+}
+
+
+.context-complaint span {
+    display: block;
+
+    margin-bottom: 2px;
+
+    color: var(--muted);
+
+    font-size: 10px;
+
+    font-weight: 700;
+
+    letter-spacing: 0.08em;
+
+    text-transform: uppercase;
+}
+
+
+.history-grid {
+    display: grid;
+    grid-template-columns:
+        repeat(4, minmax(0, 1fr));
+
+    gap: 18px;
+
+    margin-top: 16px;
+}
+
+
+.history-grid h3 {
+    margin: 0 0 6px;
+
+    color: var(--muted);
+
+    font-size: 10px;
+
+    letter-spacing: 0.08em;
+
+    text-transform: uppercase;
+}
+
+
+.history-grid ul {
+    margin: 0;
+
+    padding-left: 16px;
+
+    font-size: 12px;
+
+    line-height: 1.5;
+}
+
+
+.history-grid li + li {
+    margin-top: 3px;
+}
+
+
+.history-empty {
+    margin: 0;
+
+    color: #6f848c;
+
+    font-size: 12px;
+}
+
+
+.history-details {
+    margin-top: 16px;
+
+    padding-top: 12px;
+
+    border-top: 1px solid var(--border);
+}
+
+
+.history-details summary {
+    color: var(--primary);
+
+    font-size: 12px;
+
+    font-weight: 700;
+
+    cursor: pointer;
+}
+
+
+.history-details .history-grid {
+    margin-top: 12px;
+}
+
+
+.context-empty {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+
+    gap: 16px;
+}
+
+
+.context-empty strong {
+    display: block;
+}
+
+
+.context-empty p {
+    margin: 3px 0 0;
+
+    color: var(--muted);
+
+    font-size: 13px;
+}
+
+
 .sidebar-footer {
     margin-top: auto;
 
@@ -1588,6 +2049,19 @@ button:disabled {
 
     .workspace {
         grid-template-columns: 1fr;
+    }
+
+    .history-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .patient-row {
+        grid-template-columns: auto minmax(0, 1fr) auto;
+    }
+
+    .patient-complaint,
+    .patient-chevron {
+        display: none;
     }
 
 }
