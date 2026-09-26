@@ -19,11 +19,16 @@ data/
 *.nii
 *.nii.gz
 
-# Model weights
+# MONAI model files
 *.pt
 *.pth
 *.ckpt
+*.ts
 
-# OS
-.DS_Store
-Thumbs.db
+# Medical images
+*.nii
+*.nii.gz
+
+# Generated outputs
+outputs/
+bundles

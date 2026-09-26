@@ -1,0 +1,12 @@
+{
+  "testing": [
+    {
+      "image": [
+        "test_patient/test_t1ce.nii.gz",
+        "test_patient/test_t1.nii.gz",
+        "test_patient/test_t2.nii.gz",
+        "test_patient/test_flair.nii.gz"
+      ]
+    }
+  ]
+}

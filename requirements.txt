@@ -3,3 +3,5 @@ monai
 nibabel
 matplotlib
 numpy
+fire
+requests
