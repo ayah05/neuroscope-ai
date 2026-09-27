@@ -14,6 +14,54 @@ const SUPPORTED_EXTENSIONS =
 
 
 /**
+ * Validate the whole selection: one 4D scan or 4 sequence files.
+ * Welche Datei welche Sequenz ist, prüft das Backend (Dateiname).
+ */
+export function validateSelection(files) {
+
+    if (!files.length) {
+
+        return {
+            valid: false,
+            error: "No file selected."
+        };
+
+    }
+
+
+    if (files.length !== 1 && files.length !== 4) {
+
+        return {
+            valid: false,
+            error:
+                `Select either one 4D scan or exactly the 4 sequence ` +
+                `files (FLAIR, T1, T1ce, T2) – you selected ` +
+                `${files.length}. Do not include ground_truth.`
+        };
+
+    }
+
+
+    for (const file of files) {
+
+        const validation =
+            validateFile(file);
+
+        if (!validation.valid) {
+            return validation;
+        }
+
+    }
+
+
+    return {
+        valid: true,
+        error: null
+    };
+}
+
+
+/**
  * Validate uploaded MRI/image file.
  */
 export function validateFile(file) {
@@ -48,7 +96,7 @@ export function validateFile(file) {
         return {
             valid: false,
             error:
-                "The selected file is larger than 50 MB."
+                `${file.name} is larger than 50 MB.`
         };
 
     }

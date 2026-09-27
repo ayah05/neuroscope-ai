@@ -1,10 +1,11 @@
 import {
-    analyzeMRI
+    analyzeMRI,
+    analyzePatient
 } from "./api.js";
 
 
 import {
-    validateFile,
+    validateSelection,
     isNifti,
     formatFileSize,
     createPreviewURL,
@@ -17,6 +18,18 @@ import {
     renderLoading,
     renderAnalysisResult
 } from "./results.js";
+
+
+import {
+    listPatients,
+    getPatient
+} from "./patients.js";
+
+
+import {
+    renderPatientList,
+    renderPatientContext
+} from "./patientsView.js";
 
 
 /* ============================================================
@@ -33,7 +46,14 @@ const $ = id =>
 
 const state = {
 
-    selectedFile: null,
+    // alle Patienten (für Liste + Suche)
+    patients: [],
+
+    // ausgewählter Patient oder null (Analyse ohne Kontext)
+    patient: null,
+
+    // ein 4D-Scan oder 4 Sequenz-Dateien
+    selectedFiles: [],
 
     previewURL: null,
 
@@ -102,9 +122,13 @@ function resetViewerTransform() {
    FILE SELECTION
 ============================================================ */
 
-function handleFile(file) {
+function handleFiles(fileList) {
 
-    if (!file) {
+    const files =
+        Array.from(fileList || []);
+
+
+    if (!files.length) {
         return;
     }
 
@@ -113,7 +137,7 @@ function handleFile(file) {
 
 
     const validation =
-        validateFile(file);
+        validateSelection(files);
 
 
     if (!validation.valid) {
@@ -131,8 +155,13 @@ function handleFile(file) {
     );
 
 
-    state.selectedFile =
-        file;
+    state.selectedFiles =
+        files;
+
+
+    // NIfTI hat keine Browser-Vorschau; relevant nur für Einzelbilder
+    const file =
+        files[0];
 
 
     state.previewURL =
@@ -171,7 +200,7 @@ function handleFile(file) {
 
 
     updateFileInformation(
-        file,
+        files,
         nifti
     );
 
@@ -191,19 +220,37 @@ function handleFile(file) {
    FILE INFORMATION
 ============================================================ */
 
+function selectionLabel(files) {
+
+    return files.length === 1
+        ? files[0].name
+        : `${files.length} MRI sequences`;
+}
+
+
 function updateFileInformation(
-    file,
+    files,
     nifti
 ) {
 
+    const totalSize =
+        files.reduce((sum, file) => sum + file.size, 0);
+
+
+    const names =
+        files.length === 1
+            ? files[0].name
+            : `${files.length} files: ${files.map(file => file.name).join(", ")}`;
+
+
     $("scanMeta").textContent =
-        `${file.name} · ${formatFileSize(file.size)}`;
+        `${names} · ${formatFileSize(totalSize)}`;
 
 
     $("imageTag").textContent =
         nifti
             ? "NIFTI"
-            : getImageType(file);
+            : getImageType(files[0]);
 
 
     $("viewportLabel").textContent =
@@ -446,10 +493,26 @@ function renderLegend(entries) {
    ANALYSIS
 ============================================================ */
 
+/**
+ * Patient hat alle 4 Sequenzen auf dem Server -> Analyse ohne Upload.
+ */
+function hasStoredScans() {
+
+    return Boolean(
+        state.patient?.has_scans
+    );
+}
+
+
 async function startAnalysis() {
 
+    // hochgeladene Dateien haben Vorrang vor gespeicherten Scans
+    const useUpload =
+        state.selectedFiles.length > 0;
+
+
     if (
-        !state.selectedFile ||
+        (!useUpload && !hasStoredScans()) ||
         state.analysis.loading
     ) {
         return;
@@ -478,16 +541,32 @@ async function startAnalysis() {
 
     renderLoading(
         $("resultContent"),
-        state.selectedFile.name
+        useUpload
+            ? selectionLabel(state.selectedFiles)
+            : `${state.patient.id} (scans on file)`
     );
 
 
     try {
 
         const result =
-            await analyzeMRI(
-                state.selectedFile
-            );
+            useUpload
+                ? await analyzeMRI(
+                    state.selectedFiles,
+                    state.patient?.id
+                )
+                : await analyzePatient(
+                    state.patient.id
+                );
+
+
+        // Anzeige: Patientenname statt Dateiname
+        if (state.patient) {
+
+            result.patient_id =
+                `${state.patient.name} · ${state.patient.id}`;
+
+        }
 
 
         state.analysis.result =
@@ -566,9 +645,14 @@ $("fileInput")
         "change",
         event => {
 
-            handleFile(
-                event.target.files[0]
+            handleFiles(
+                event.target.files
             );
+
+
+            // gleiche Auswahl erneut wählbar machen
+            event.target.value =
+                "";
 
         }
     );
@@ -626,8 +710,8 @@ dropzone.addEventListener(
     "drop",
     event => {
 
-        handleFile(
-            event.dataTransfer.files[0]
+        handleFiles(
+            event.dataTransfer.files
         );
 
     }
@@ -698,6 +782,258 @@ $("analyzeBtn")
 
 
 /* ============================================================
+   VIEWS: PATIENTS <-> MRI ANALYSIS
+============================================================ */
+
+function showView(view) {
+
+    const patientsActive =
+        view === "patients";
+
+
+    $("patientsView").hidden =
+        !patientsActive;
+
+    $("analysisView").hidden =
+        patientsActive;
+
+
+    $("navPatients").classList.toggle(
+        "active",
+        patientsActive
+    );
+
+    $("navAnalysis").classList.toggle(
+        "active",
+        !patientsActive
+    );
+
+
+    const crumbs =
+        patientsActive
+            ? ["Workspace", "Patients"]
+            : state.patient
+                ? ["Patients", state.patient.name, "MRI Analysis"]
+                : ["Workspace", "MRI Analysis"];
+
+
+    $("breadcrumb").replaceChildren(
+        ...crumbs.flatMap((crumb, index) => {
+
+            const text =
+                document.createTextNode(crumb);
+
+            if (index === 0) {
+                return [text];
+            }
+
+            const separator =
+                document.createElement("span");
+
+            separator.textContent =
+                "/";
+
+            return [separator, text];
+
+        })
+    );
+
+
+    window.scrollTo(0, 0);
+}
+
+
+/**
+ * Alles zur vorherigen Analyse zurücksetzen (neuer Patient).
+ */
+function resetAnalysis() {
+
+    releasePreviewURL(
+        state.previewURL
+    );
+
+
+    state.previewURL =
+        null;
+
+    state.selectedFiles =
+        [];
+
+    state.analysis.result =
+        null;
+
+
+    setError("");
+
+
+    renderEmptyResult(
+        $("resultContent")
+    );
+
+
+    $("resultTag").textContent =
+        "Ready";
+
+    $("step2").classList.remove("active");
+
+    $("step3").classList.remove("active");
+
+
+    $("scanMeta").textContent =
+        "No file selected";
+
+    $("imageTag").textContent =
+        "No scan";
+
+    $("viewportLabel").textContent =
+        "VIEWPORT 01";
+
+
+    $("scanImage").style.display =
+        "none";
+
+    $("scanImage").removeAttribute(
+        "src"
+    );
+
+    $("dicomMessage").style.display =
+        "none";
+
+    $("scanEmpty").style.display =
+        "";
+
+    $("segLegend").hidden =
+        true;
+
+
+    resetViewerTransform();
+
+    setViewerButtonsEnabled(false);
+
+
+    // Patient mit gespeicherten Scans: sofort analysierbar
+    if (hasStoredScans()) {
+
+        $("scanMeta").textContent =
+            "4 MRI sequences on file (FLAIR, T1, T1ce, T2) · " +
+            "or upload new files";
+
+        $("imageTag").textContent =
+            "On file";
+
+    }
+
+
+    $("analyzeBtn").disabled =
+        !hasStoredScans();
+}
+
+
+function openAnalysis(patient) {
+
+    // laufende Analyse würde sonst beim falschen Patienten landen
+    if (state.analysis.loading) {
+
+        setError(
+            "Please wait until the current analysis has finished."
+        );
+
+        showView("analysis");
+
+        return;
+    }
+
+
+    // per ID vergleichen: getPatient() liefert jedes Mal ein neues Objekt
+    if (patient?.id !== state.patient?.id) {
+
+        state.patient =
+            patient;
+
+        resetAnalysis();
+
+    }
+
+
+    renderPatientContext(
+        $("patientContext"),
+        state.patient,
+        () => showView("patients")
+    );
+
+
+    showView("analysis");
+}
+
+
+async function selectPatient(id) {
+
+    const patient =
+        await getPatient(id);
+
+
+    if (patient) {
+        openAnalysis(patient);
+    }
+}
+
+
+function filterPatients(query) {
+
+    const needle =
+        query.trim().toLowerCase();
+
+
+    const matches =
+        state.patients.filter(patient =>
+            [
+                patient.name,
+                patient.id,
+                patient.chief_complaint
+            ]
+                .join(" ")
+                .toLowerCase()
+                .includes(needle)
+        );
+
+
+    renderPatientList(
+        $("patientList"),
+        matches,
+        selectPatient
+    );
+}
+
+
+$("navPatients")
+    .addEventListener(
+        "click",
+        () => showView("patients")
+    );
+
+
+$("navAnalysis")
+    .addEventListener(
+        "click",
+        () => openAnalysis(state.patient)
+    );
+
+
+$("noPatientBtn")
+    .addEventListener(
+        "click",
+        () => openAnalysis(null)
+    );
+
+
+$("patientSearch")
+    .addEventListener(
+        "input",
+        event => filterPatients(event.target.value)
+    );
+
+
+/* ============================================================
    CLEANUP
 ============================================================ */
 
@@ -720,3 +1056,39 @@ window.addEventListener(
 renderEmptyResult(
     $("resultContent")
 );
+
+
+renderPatientContext(
+    $("patientContext"),
+    null,
+    () => showView("patients")
+);
+
+
+try {
+
+    state.patients =
+        await listPatients();
+
+    filterPatients("");
+
+}
+
+catch (error) {
+
+    console.error(
+        error
+    );
+
+    state.patients =
+        [];
+
+    $("patientList").innerHTML =
+        `<li class="patient-empty">
+            Patients could not be loaded – is the backend running?
+        </li>`;
+
+}
+
+
+showView("patients");

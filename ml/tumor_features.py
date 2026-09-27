@@ -812,6 +812,55 @@ def process_patient(
 
 
 # ============================================================
+# BACKEND ENTRY POINT (backend/app.py)
+# ============================================================
+
+# Components below this size are treated as segmentation noise
+# when counting lesions for the report (1 mL = 1000 voxels at 1 mm).
+MIN_LESION_ML = 1.0
+
+
+def compute_features(
+    prediction_path,
+    patient_id,
+    mri_dir
+):
+    """
+    Input:  prediction_path – segmentation (.nii.gz, BraTS labels)
+            patient_id      – shown in report and file names
+            mri_dir         – folder with t1/t1ce/t2/flair.nii.gz
+    Output: process_patient() features plus
+            spatial.lesion_count (components >= MIN_LESION_ML)
+    """
+
+    features = process_patient(
+        patient_id=patient_id,
+        patient_dir=Path(mri_dir),
+        prediction_file=Path(prediction_path),
+    )
+
+
+    components = features["spatial"]["components"]
+
+    volumes = components.get("component_volumes_ml") or []
+
+    lesion_count = sum(
+        1 for value in volumes if value >= MIN_LESION_ML
+    )
+
+    # tumor present but only small fragments -> still one lesion
+    if lesion_count == 0 and volumes:
+        lesion_count = 1
+
+    features["spatial"]["lesion_count"] = lesion_count
+
+    features["spatial"]["lesion_count_min_volume_ml"] = MIN_LESION_ML
+
+
+    return features
+
+
+# ============================================================
 # 12. MAIN
 # ============================================================
 

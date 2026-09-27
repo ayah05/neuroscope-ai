@@ -35,7 +35,24 @@ def ml(value):
 
 def percent(value):
 
+    # tumor_features liefert None, wenn kein Tumor segmentiert wurde
+    if value is None:
+        return "n/a"
+
     return f"{value * 100:.0f}%"
+
+
+def method_label(features):
+    """
+    'Automated MRI segmentation (MONAI SegResNet)'.
+    features["model"] ist ein Dict ({"name": ...}) oder ein String.
+    """
+
+    model = features.get("model")
+
+    name = model.get("name") if isinstance(model, dict) else model
+
+    return f"Automated MRI segmentation ({name or 'MONAI SegResNet'})"
 
 
 def safe_text(value):
@@ -189,7 +206,7 @@ def generate_report(
         "",
         f"**Patient:** {features['patient_id']}  ",
         f"**Date:** {date.today().strftime('%d %b %Y')}  ",
-        f"**Method:** {features['analysis_type']} ({features['model']})  ",
+        f"**Method:** {method_label(features)}  ",
         "**Sequences:** T1, T1ce, T2, FLAIR",
         "",
         f"> ⚠️ {DISCLAIMER}",

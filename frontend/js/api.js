@@ -11,9 +11,11 @@ const API_BASE_URL =
 
 
 /**
- * Sends an MRI file to the NeuroScope backend.
+ * Sends MRI files to the NeuroScope backend:
+ * one 4D scan, or the 4 sequence files (FLAIR, T1, T1ce, T2).
+ * patientId (optional) verknüpft die Analyse mit dem Patienten.
  */
-export async function analyzeMRI(file) {
+export async function analyzeMRI(files, patientId = null) {
 
     if (!API_BASE_URL) {
         throw new Error(
@@ -24,30 +26,74 @@ export async function analyzeMRI(file) {
 
     const formData = new FormData();
 
-    formData.append(
-        "image",
-        file
-    );
+    files.forEach(file => {
 
+        formData.append(
+            "images",
+            file
+        );
+
+    });
+
+
+    if (patientId) {
+
+        formData.append(
+            "patient_id",
+            patientId
+        );
+
+    }
+
+
+    return postAnalysis(
+        API_BASE_URL,
+        formData
+    );
+}
+
+
+/**
+ * Analyzes the MRI scans stored on the server for this patient
+ * (ml/data/real_patients/<id>/), no upload needed.
+ */
+export async function analyzePatient(patientId) {
+
+    return postAnalysis(
+        `/api/patients/${encodeURIComponent(patientId)}/analyze`
+    );
+}
+
+
+async function postAnalysis(url, body = undefined) {
 
     const response = await fetch(
-        API_BASE_URL,
+        url,
         {
             method: "POST",
-            body: formData
+            body
         }
     );
 
 
     if (!response.ok) {
 
-        // FastAPI liefert Fehlertexte als {"detail": "..."}
-        const body =
+        // FastAPI liefert Fehlertexte als {"detail": "..."},
+        // Validierungsfehler (422) als {"detail": [{"msg": ...}, ...]}
+        const errorBody =
             await response.json().catch(() => null);
 
 
+        const detail =
+            Array.isArray(errorBody?.detail)
+                ? errorBody.detail
+                    .map(item => item.msg)
+                    .join("; ")
+                : errorBody?.detail;
+
+
         throw new Error(
-            body?.detail ||
+            detail ||
             `NeuroScope API returned HTTP ${response.status}`
         );
 

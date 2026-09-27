@@ -49,43 +49,20 @@ image = (
 
 
 # ============================================================
-# GPU INFERENCE
+# SHARED MODEL LOGIC
+# used by run_inference() (batch) and segment() (backend upload)
 # ============================================================
 
-@app.function(
-    image=image,
-    gpu="T4",
-    timeout=1200
-)
-def run_inference():
-
-    from pathlib import Path
+def load_model(device):
+    """
+    SegResNet exactly as in the bundle's inference.json,
+    with the pretrained checkpoint loaded.
+    """
 
     import torch
-    import nibabel as nib
-    import numpy as np
 
     from monai.networks.nets import SegResNet
-    from monai.transforms import NormalizeIntensity
-    from monai.inferers import sliding_window_inference
 
-
-    # ========================================================
-    # 1. GPU
-    # ========================================================
-
-    device = torch.device("cuda")
-
-    print("\n========== GPU ==========")
-    print(
-        "GPU:",
-        torch.cuda.get_device_name(0)
-    )
-
-
-    # ========================================================
-    # 2. LOAD MODEL ONCE
-    # ========================================================
 
     print("\n========== MODEL ==========")
 
@@ -122,6 +99,209 @@ def run_inference():
             model.parameters()
         ).device
     )
+
+    return model
+
+
+def segment_volume(model, normalizer, image_np, device):
+    """
+    Input:  numpy [4, H, W, D], channel order T1ce, T1, T2, FLAIR
+    Output: numpy [H, W, D] uint8 in BraTS labels
+            (0 background, 1 necrotic/non-enhancing, 2 edema,
+             4 enhancing)
+    """
+
+    import torch
+    import numpy as np
+
+    from monai.inferers import sliding_window_inference
+
+
+    # ========================================================
+    # NORMALIZATION
+    # ========================================================
+
+    image_tensor = torch.from_numpy(
+        image_np
+    )
+
+
+    image_tensor = normalizer(
+        image_tensor
+    )
+
+
+    # [4,H,W,D]
+    # ->
+    # [1,4,H,W,D]
+
+    image_tensor = (
+        image_tensor
+        .unsqueeze(0)
+        .to(device)
+    )
+
+
+    print(
+        "Model input:",
+        image_tensor.shape
+    )
+
+
+    # ========================================================
+    # INFERENCE
+    # ========================================================
+
+    print(
+        "\nRunning MONAI inference..."
+    )
+
+
+    with torch.no_grad():
+
+        prediction = (
+            sliding_window_inference(
+                inputs=image_tensor,
+                roi_size=(
+                    240,
+                    240,
+                    160
+                ),
+                sw_batch_size=1,
+                predictor=model,
+                overlap=0.5
+            )
+        )
+
+
+        prediction = torch.sigmoid(
+            prediction
+        )
+
+
+    print(
+        "Raw prediction:",
+        prediction.shape
+    )
+
+
+    # ========================================================
+    # THRESHOLD
+    # ========================================================
+
+    prediction = (
+        prediction[0]
+        > 0.5
+    )
+
+
+    # ========================================================
+    # BRATS LABEL MAP
+    #
+    # Bundle inference.json:
+    #
+    # channel 2 -> label 4
+    # channel 0 -> label 1
+    # channel 1 -> label 2
+    # ========================================================
+
+    segmentation = torch.where(
+        prediction[2],
+        4,
+        torch.where(
+            prediction[0],
+            1,
+            torch.where(
+                prediction[1],
+                2,
+                0
+            )
+        )
+    )
+
+
+    segmentation = (
+        segmentation
+        .cpu()
+        .numpy()
+        .astype(np.uint8)
+    )
+
+
+    # ========================================================
+    # PRINT RESULT
+    # ========================================================
+
+    print(
+        "\nSegmentation:"
+    )
+
+
+    unique, counts = np.unique(
+        segmentation,
+        return_counts=True
+    )
+
+
+    for label, count in zip(
+        unique,
+        counts
+    ):
+
+        print(
+            f"Label {label}: "
+            f"{count} voxels"
+        )
+
+
+    # Free GPU memory before the next scan
+    del image_tensor
+    del prediction
+
+    torch.cuda.empty_cache()
+
+
+    return segmentation
+
+
+# ============================================================
+# GPU INFERENCE (BATCH: all patients in ml/data/real_patients)
+# ============================================================
+
+@app.function(
+    image=image,
+    gpu="T4",
+    timeout=1200
+)
+def run_inference():
+
+    from pathlib import Path
+
+    import torch
+    import nibabel as nib
+    import numpy as np
+
+    from monai.transforms import NormalizeIntensity
+
+
+    # ========================================================
+    # 1. GPU
+    # ========================================================
+
+    device = torch.device("cuda")
+
+    print("\n========== GPU ==========")
+    print(
+        "GPU:",
+        torch.cuda.get_device_name(0)
+    )
+
+
+    # ========================================================
+    # 2. LOAD MODEL ONCE
+    # ========================================================
+
+    model = load_model(device)
 
 
     # ========================================================
@@ -293,140 +473,15 @@ def run_inference():
 
 
         # ====================================================
-        # 8. NORMALIZATION
+        # 8.-12. NORMALIZATION, INFERENCE, LABEL MAP
         # ====================================================
 
-        image_tensor = torch.from_numpy(
-            image_np
+        segmentation = segment_volume(
+            model,
+            normalizer,
+            image_np,
+            device
         )
-
-
-        image_tensor = normalizer(
-            image_tensor
-        )
-
-
-        # [4,H,W,D]
-        # ->
-        # [1,4,H,W,D]
-
-        image_tensor = (
-            image_tensor
-            .unsqueeze(0)
-            .to(device)
-        )
-
-
-        print(
-            "Model input:",
-            image_tensor.shape
-        )
-
-
-        # ====================================================
-        # 9. INFERENCE
-        # ====================================================
-
-        print(
-            "\nRunning MONAI inference..."
-        )
-
-
-        with torch.no_grad():
-
-            prediction = (
-                sliding_window_inference(
-                    inputs=image_tensor,
-                    roi_size=(
-                        240,
-                        240,
-                        160
-                    ),
-                    sw_batch_size=1,
-                    predictor=model,
-                    overlap=0.5
-                )
-            )
-
-
-            prediction = torch.sigmoid(
-                prediction
-            )
-
-
-        print(
-            "Raw prediction:",
-            prediction.shape
-        )
-
-
-        # ====================================================
-        # 10. THRESHOLD
-        # ====================================================
-
-        prediction = (
-            prediction[0]
-            > 0.5
-        )
-
-
-        # ====================================================
-        # 11. BRATS LABEL MAP
-        #
-        # Bundle inference.json:
-        #
-        # channel 2 -> label 4
-        # channel 0 -> label 1
-        # channel 1 -> label 2
-        # ====================================================
-
-        segmentation = torch.where(
-            prediction[2],
-            4,
-            torch.where(
-                prediction[0],
-                1,
-                torch.where(
-                    prediction[1],
-                    2,
-                    0
-                )
-            )
-        )
-
-
-        segmentation = (
-            segmentation
-            .cpu()
-            .numpy()
-            .astype(np.uint8)
-        )
-
-
-        # ====================================================
-        # 12. PRINT RESULT
-        # ====================================================
-
-        print(
-            "\nSegmentation:"
-        )
-
-
-        unique, counts = np.unique(
-            segmentation,
-            return_counts=True
-        )
-
-
-        for label, count in zip(
-            unique,
-            counts
-        ):
-
-            print(
-                f"Label {label}: "
-                f"{count} voxels"
-            )
 
 
         # ====================================================
@@ -477,14 +532,7 @@ def run_inference():
             )
 
 
-        # ----------------------------------------------------
-        # Free GPU memory before next patient
-        # ----------------------------------------------------
-
-        del image_tensor
-        del prediction
-
-        torch.cuda.empty_cache()
+        # GPU memory is freed inside segment_volume()
 
 
     # ========================================================
@@ -503,6 +551,93 @@ def run_inference():
 
 
     return results
+
+
+# ============================================================
+# GPU INFERENCE (SINGLE SCAN, called by backend/app.py)
+# ============================================================
+
+@app.function(
+    image=image,
+    gpu="T4",
+    timeout=600
+)
+def segment(scan_bytes: bytes) -> bytes:
+    """
+    Input:  4D NIfTI (.nii.gz) as bytes, MSD format [H, W, D, 4],
+            channels FLAIR, T1, T1ce, T2
+    Output: segmentation as .nii.gz bytes in BraTS labels
+    """
+
+    import torch
+    import nibabel as nib
+    import numpy as np
+
+    from monai.transforms import NormalizeIntensity
+
+
+    device = torch.device("cuda")
+
+    print(
+        "GPU:",
+        torch.cuda.get_device_name(0)
+    )
+
+
+    input_file = "/tmp/upload.nii.gz"
+
+    with open(input_file, "wb") as file:
+        file.write(scan_bytes)
+
+
+    img = nib.load(input_file)
+
+    data = img.get_fdata().astype(np.float32)
+
+    print("Uploaded MRI shape:", data.shape)
+
+
+    # MSD order (FLAIR, T1, T1ce, T2) -> model order
+    # (T1ce, T1, T2, FLAIR), [H,W,D,4] -> [4,H,W,D]
+    image_np = np.stack(
+        [data[..., 2], data[..., 1], data[..., 3], data[..., 0]],
+        axis=0
+    )
+
+
+    model = load_model(device)
+
+    normalizer = NormalizeIntensity(
+        nonzero=True,
+        channel_wise=True
+    )
+
+    segmentation = segment_volume(
+        model,
+        normalizer,
+        image_np,
+        device
+    )
+
+
+    # 3D result: take affine and spatial unit from the input
+    # (the 4D header itself does not fit a 3D volume).
+    # tumor_features.py refuses volumes without a known unit.
+    result = nib.Nifti1Image(segmentation, img.affine)
+
+    spatial_unit, _ = img.header.get_xyzt_units()
+
+    result.header.set_xyzt_units(
+        spatial_unit if spatial_unit != "unknown" else "mm"
+    )
+
+
+    output_file = "/tmp/prediction.nii.gz"
+
+    nib.save(result, output_file)
+
+    with open(output_file, "rb") as file:
+        return file.read()
 
 
 # ============================================================
