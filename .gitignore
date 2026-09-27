@@ -15,22 +15,19 @@ __pycache__/
 *.env
 
 # Medical imaging data
-data/
+
 *.nii
 *.nii.gz
 
-# MONAI model files
+# Model weights
 *.pt
 *.pth
 *.ckpt
-*.ts
 
-# Medical images
-*.nii
-*.nii.gz
-
-# Generated outputs
-outputs/
-bundles
+# OS
+.DS_Store
+Thumbs.db
 
 downloads
+outputs
+bundles/brats_mri_segmentation/models/

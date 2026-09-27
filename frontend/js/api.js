@@ -13,8 +13,7 @@ const API_BASE_URL =
 /**
  * Sends MRI files to the NeuroScope backend:
  * one 4D scan, or the 4 sequence files (FLAIR, T1, T1ce, T2).
- * patientId (optional) verknüpft die Analyse mit dem Patienten;
- * das Backend nutzt ihn noch nicht (Anbindung an Patientendaten folgt).
+ * patientId (optional) verknüpft die Analyse mit dem Patienten.
  */
 export async function analyzeMRI(files, patientId = null) {
 
@@ -47,11 +46,32 @@ export async function analyzeMRI(files, patientId = null) {
     }
 
 
-    const response = await fetch(
+    return postAnalysis(
         API_BASE_URL,
+        formData
+    );
+}
+
+
+/**
+ * Analyzes the MRI scans stored on the server for this patient
+ * (ml/data/real_patients/<id>/), no upload needed.
+ */
+export async function analyzePatient(patientId) {
+
+    return postAnalysis(
+        `/api/patients/${encodeURIComponent(patientId)}/analyze`
+    );
+}
+
+
+async function postAnalysis(url, body = undefined) {
+
+    const response = await fetch(
+        url,
         {
             method: "POST",
-            body: formData
+            body
         }
     );
 
@@ -60,16 +80,16 @@ export async function analyzeMRI(files, patientId = null) {
 
         // FastAPI liefert Fehlertexte als {"detail": "..."},
         // Validierungsfehler (422) als {"detail": [{"msg": ...}, ...]}
-        const body =
+        const errorBody =
             await response.json().catch(() => null);
 
 
         const detail =
-            Array.isArray(body?.detail)
-                ? body.detail
+            Array.isArray(errorBody?.detail)
+                ? errorBody.detail
                     .map(item => item.msg)
                     .join("; ")
-                : body?.detail;
+                : errorBody?.detail;
 
 
         throw new Error(

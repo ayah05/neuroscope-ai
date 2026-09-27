@@ -105,7 +105,8 @@ def build_query_terms(features):
     else:
         terms.append("non-enhancing")
 
-    if ratios["edema_fraction"] >= 0.5:
+    # None, wenn kein Tumor segmentiert wurde
+    if (ratios.get("edema_fraction") or 0) >= 0.5:
         terms.append("peritumoral edema")
 
     if lesion_count and lesion_count > 1:

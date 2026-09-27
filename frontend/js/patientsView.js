@@ -83,10 +83,39 @@ function statusClass(status) {
 
     return {
         "Awaiting MRI": "status-awaiting",
+        "Incomplete scans": "status-awaiting",
         "MRI analyzed": "status-analyzed",
+        "Scans available": "status-analyzed",
         "Follow-up": "status-followup"
     }[status] || "";
 }
+
+
+/**
+ * Kleine Zeile unter dem Namen: ID (falls nicht schon der Name)
+ * und vorhandene Scans.
+ */
+function subline(patient) {
+
+    return [
+        patient.name !== patient.id ? patient.id : null,
+        patient.has_scans ? "MRI on file: FLAIR · T1 · T1ce · T2" : null
+    ]
+        .filter(Boolean)
+        .join(" · ");
+}
+
+
+function lastVisit(patient) {
+
+    return patient.last_visit
+        ? `Last visit ${formatDate(patient.last_visit)}`
+        : "";
+}
+
+
+const NO_HISTORY =
+    "No clinical history on file";
 
 
 function listOrEmpty(items) {
@@ -158,14 +187,14 @@ export function renderPatientList(
                         </span>
 
                         <small>
-                            ${escapeHTML(patient.id)}
+                            ${escapeHTML(subline(patient))}
                         </small>
 
                     </span>
 
 
-                    <span class="patient-complaint">
-                        ${escapeHTML(patient.chief_complaint)}
+                    <span class="patient-complaint${patient.chief_complaint ? "" : " is-empty"}">
+                        ${escapeHTML(patient.chief_complaint || NO_HISTORY)}
                     </span>
 
 
@@ -176,7 +205,7 @@ export function renderPatientList(
                         </span>
 
                         <small>
-                            Last visit ${escapeHTML(formatDate(patient.last_visit))}
+                            ${escapeHTML(lastVisit(patient))}
                         </small>
 
                     </span>
@@ -288,8 +317,11 @@ export function renderPatientContext(
                     </div>
 
                     <small>
-                        ${escapeHTML(patient.id)}
-                        · Last visit ${escapeHTML(formatDate(patient.last_visit))}
+                        ${escapeHTML(
+                            [subline(patient), lastVisit(patient)]
+                                .filter(Boolean)
+                                .join(" · ")
+                        )}
                     </small>
 
                 </div>
@@ -311,9 +343,12 @@ export function renderPatientContext(
             </div>
 
 
-            <p class="context-complaint">
+            <p class="context-complaint${patient.chief_complaint ? "" : " is-empty"}">
                 <span>Chief complaint</span>
-                ${escapeHTML(patient.chief_complaint)}
+                ${escapeHTML(
+                    patient.chief_complaint ||
+                    `${NO_HISTORY} – the analysis uses the MRI only.`
+                )}
             </p>
 
 

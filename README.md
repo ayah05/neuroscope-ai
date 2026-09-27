@@ -89,4 +89,7 @@ GROQ_API_KEY=...
 - **BraTS:** Menze et al., IEEE TMI 34(10), 2015; Bakas et al., Scientific Data 4, 2017.
 - **Model:** MONAI Model Zoo `brats_mri_segmentation`, based on Myronenko,
   *3D MRI brain tumor segmentation using autoencoder regularization*, 2018.
-- The patients shown in the app are **fictional demo data**.
+- The patients shown in the app are the anonymized scans in
+  `ml/data/real_patients/<ID>/` (created by `ml/prepare_real_patient.py`).
+  An optional `patient.json` in a patient folder adds a clinical history
+  (fields documented in `frontend/js/patients.js`).

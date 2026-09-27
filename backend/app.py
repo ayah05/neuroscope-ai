@@ -14,6 +14,7 @@ from pathlib import Path
 import base64
 import gzip
 import io
+import json
 import re
 import sys
 import tempfile
@@ -148,16 +149,24 @@ def detect_sequence(filename):
     return None
 
 
-def combine_sequences(uploads, tmp):
+def spatial_unit(header):
     """
-    Vier einzelne 3D-Sequenzen -> ein 4D-Scan im MSD-Format
-    [H, W, D, 4] mit Kanälen FLAIR, T1, T1ce, T2.
-    Output: Pfad zur kombinierten .nii.gz
+    Räumliche Einheit übernehmen; tumor_features.py rechnet nur mit
+    bekannter Einheit. BraTS/MSD-Daten sind in mm.
     """
 
-    volumes = {}
+    unit, _ = header.get_xyzt_units()
 
-    reference = None
+    return unit if unit != "unknown" else "mm"
+
+
+def save_uploaded_sequences(uploads, tmp):
+    """
+    Vier hochgeladene 3D-Sequenzen speichern.
+    Output: {"flair": Path, "t1": Path, "t1ce": Path, "t2": Path}
+    """
+
+    paths = {}
 
     for upload in uploads:
 
@@ -172,27 +181,49 @@ def combine_sequences(uploads, tmp):
                 f"contain flair, t1, t1ce or t2."
             )
 
-        if sequence in volumes:
+        if sequence in paths:
             raise HTTPException(
                 400,
                 f"Two files were detected as {sequence.upper()}. Please "
                 f"select exactly one file each for FLAIR, T1, T1ce and T2."
             )
 
-        path = Path(tmp) / f"{sequence}{NIFTI_SUFFIX.search(name).group(0)}"
+        path = Path(tmp) / f"upload_{sequence}{NIFTI_SUFFIX.search(name).group(0)}"
         path.write_bytes(upload.file.read())
+
+        paths[sequence] = path
+
+    return paths
+
+
+def combine_sequences(paths, combined_path):
+    """
+    Vier 3D-Sequenzen -> ein 4D-Scan im MSD-Format [H, W, D, 4]
+    mit Kanälen FLAIR, T1, T1ce, T2 (Reihenfolge, die segment() erwartet).
+    """
+
+    volumes = {}
+
+    reference = None
+
+    for sequence in MSD_ORDER:
+
+        path = paths[sequence]
 
         try:
             img = nib.load(path)
             data = np.asarray(img.dataobj, dtype=np.float32)
         except Exception:
-            raise HTTPException(400, f"'{name}' is not a readable NIfTI scan.")
+            raise HTTPException(
+                400,
+                f"The {sequence.upper()} file is not a readable NIfTI scan."
+            )
 
         if data.ndim != 3:
             raise HTTPException(
                 400,
-                f"'{name}' should be a single 3D sequence, got shape "
-                f"{data.shape}."
+                f"The {sequence.upper()} file should be a single 3D sequence, "
+                f"got shape {data.shape}."
             )
 
         if reference is not None and data.shape != reference.shape:
@@ -206,13 +237,35 @@ def combine_sequences(uploads, tmp):
 
         volumes[sequence] = data
 
-    combined = np.stack([volumes[s] for s in MSD_ORDER], axis=-1)
+    combined = nib.Nifti1Image(
+        np.stack([volumes[s] for s in MSD_ORDER], axis=-1),
+        reference.affine
+    )
 
-    combined_path = Path(tmp) / "scan.nii.gz"
+    combined.header.set_xyzt_units(spatial_unit(reference.header))
 
-    nib.save(nib.Nifti1Image(combined, reference.affine), combined_path)
+    nib.save(combined, combined_path)
 
     return combined_path
+
+
+def write_sequence_files(scan, mri_dir):
+    """
+    4D-Scan in die vier Einzeldateien zerlegen, die
+    tumor_features.process_patient() im MRI-Ordner erwartet.
+    """
+
+    mri_dir.mkdir(parents=True, exist_ok=True)
+
+    data = np.asarray(scan.dataobj, dtype=np.float32)
+
+    for channel, sequence in enumerate(MSD_ORDER):
+
+        img = nib.Nifti1Image(data[..., channel], scan.affine)
+
+        img.header.set_xyzt_units(spatial_unit(scan.header))
+
+        nib.save(img, mri_dir / f"{sequence}.nii.gz")
 
 
 def load_scan(path):
@@ -396,7 +449,10 @@ def analyze(images: list[UploadFile] = File(...)):
 
         if len(images) == 4:
 
-            scan_path = combine_sequences(images, tmp)
+            scan_path = combine_sequences(
+                save_uploaded_sequences(images, tmp),
+                Path(tmp) / "scan.nii.gz"
+            )
 
         else:
 
@@ -406,51 +462,69 @@ def analyze(images: list[UploadFile] = File(...)):
             scan_path = Path(tmp) / f"scan{suffix}"
             scan_path.write_bytes(images[0].file.read())
 
-        scan = load_scan(scan_path)
+        return run_analysis(scan_path, patient_id, Path(tmp))
 
-        scan_bytes = scan_path.read_bytes()
 
-        # segment() auf Modal liest immer .nii.gz
-        if scan_path.suffix.lower() == ".nii":
-            scan_bytes = gzip.compress(scan_bytes)
+def run_analysis(scan_path, patient_id, work_dir):
+    """
+    Gemeinsame Pipeline für Upload und gespeicherte Patienten:
+    4D-Scan -> Modal-Segmentierung -> Kennzahlen -> Amass -> LLM-Bericht.
+    Output: Antwort-Dict (Format siehe analyze()).
+    """
 
-        # ------------------------------------------------------
-        # 1. SEGMENTIERUNG AUF MODAL
-        # ------------------------------------------------------
+    scan = load_scan(scan_path)
 
-        try:
-            segment = modal.Function.from_name(MODAL_APP, MODAL_FUNCTION)
-            prediction_bytes = segment.remote(scan_bytes)
-        except Exception as error:
-            raise HTTPException(
-                502,
-                f"MONAI segmentation on Modal failed: {error}"
-            )
+    scan_bytes = scan_path.read_bytes()
 
-        prediction_path = Path(tmp) / "prediction.nii.gz"
-        prediction_path.write_bytes(prediction_bytes)
+    # segment() auf Modal liest immer .nii.gz
+    if scan_path.suffix.lower() == ".nii":
+        scan_bytes = gzip.compress(scan_bytes)
 
-        # ------------------------------------------------------
-        # 2. KENNZAHLEN + LITERATUR (Amass) + BERICHT (LLM über Groq)
-        # ------------------------------------------------------
+    # tumor_features.process_patient() erwartet die Einzelsequenzen
+    mri_dir = work_dir / "mri"
 
-        features = compute_features(prediction_path, patient_id)
+    write_sequence_files(scan, mri_dir)
 
-        research = load_research(features)
+    # ------------------------------------------------------
+    # 1. SEGMENTIERUNG AUF MODAL
+    # ------------------------------------------------------
 
-        report = generate_clinical_report(features, research)
-
-        # ------------------------------------------------------
-        # 3. BILD FÜR DEN VIEWER
-        # ------------------------------------------------------
-
-        flair = scan.dataobj[..., FLAIR_CHANNEL]
-        segmentation = np.asarray(nib.load(prediction_path).dataobj)
-
-        overlay_image, overlay_slice = render_overlay(
-            np.asarray(flair),
-            segmentation
+    try:
+        segment = modal.Function.from_name(MODAL_APP, MODAL_FUNCTION)
+        prediction_bytes = segment.remote(scan_bytes)
+    except Exception as error:
+        raise HTTPException(
+            502,
+            f"MONAI segmentation on Modal failed: {error}"
         )
+
+    prediction_path = work_dir / "prediction.nii.gz"
+    prediction_path.write_bytes(prediction_bytes)
+
+    # ------------------------------------------------------
+    # 2. KENNZAHLEN + LITERATUR (Amass) + BERICHT (LLM über Groq)
+    # ------------------------------------------------------
+
+    try:
+        features = compute_features(prediction_path, patient_id, mri_dir)
+    except (ValueError, FileNotFoundError) as error:
+        raise HTTPException(500, f"Feature extraction failed: {error}")
+
+    research = load_research(features)
+
+    report = generate_clinical_report(features, research)
+
+    # ------------------------------------------------------
+    # 3. BILD FÜR DEN VIEWER
+    # ------------------------------------------------------
+
+    flair = scan.dataobj[..., FLAIR_CHANNEL]
+    segmentation = np.asarray(nib.load(prediction_path).dataobj)
+
+    overlay_image, overlay_slice = render_overlay(
+        np.asarray(flair),
+        segmentation
+    )
 
     seg = features["segmentation"]
 
@@ -475,6 +549,136 @@ def analyze(images: list[UploadFile] = File(...)):
         "legend": legend(features),
         "research": research_card(research)
     }
+
+
+# ============================================================
+# PATIENTS (ml/data/real_patients/<ID>/)
+#
+# Pro Patient ein Ordner mit flair/t1/t1ce/t2.nii.gz
+# (+ optional ground_truth.nii.gz). Optional liegt dort eine
+# patient.json mit der Krankengeschichte; Felder wie in
+# frontend/js/patients.js dokumentiert (name, birth_date, sex,
+# chief_complaint, symptoms, conditions, medications, ...).
+# ============================================================
+
+PATIENTS_DIR = ROOT / "ml" / "data" / "real_patients"
+
+PATIENT_ID = re.compile(r"^[A-Za-z0-9_-]+$")
+
+HISTORY_FIELDS = [
+    "name", "birth_date", "sex", "status", "last_visit",
+    "chief_complaint", "symptoms", "conditions", "medications",
+    "allergies", "prior_imaging", "prior_treatment",
+    "family_history", "notes",
+]
+
+
+def patient_dir(patient_id):
+    """Ordner eines Patienten; schützt vor Pfaden wie '../'."""
+
+    if not PATIENT_ID.match(patient_id):
+        raise HTTPException(404, "Patient not found.")
+
+    directory = PATIENTS_DIR / patient_id
+
+    if not directory.is_dir():
+        raise HTTPException(404, "Patient not found.")
+
+    return directory
+
+
+def patient_record(directory):
+    """Patient im Format von frontend/js/patients.js."""
+
+    scans = {
+        sequence: (directory / f"{sequence}.nii.gz").exists()
+        for sequence in MSD_ORDER
+    }
+
+    has_scans = all(scans.values())
+
+    record = {
+        "id": directory.name,
+        "name": directory.name,
+        "birth_date": "",
+        "sex": "",
+        "status": "Scans available" if has_scans else "Incomplete scans",
+        "last_visit": "",
+        "chief_complaint": "",
+        "symptoms": [],
+        "conditions": [],
+        "medications": [],
+        "allergies": [],
+        "prior_imaging": [],
+        "prior_treatment": [],
+        "family_history": "",
+        "notes": "",
+        "scans": scans,
+        "has_scans": has_scans,
+        "has_ground_truth": (directory / "ground_truth.nii.gz").exists(),
+    }
+
+    history_file = directory / "patient.json"
+
+    if history_file.exists():
+
+        try:
+            history = json.loads(history_file.read_text(encoding="utf-8"))
+        except ValueError:
+            history = {}
+
+        record.update({
+            field: history[field]
+            for field in HISTORY_FIELDS
+            if field in history
+        })
+
+    return record
+
+
+@app.get("/api/patients")
+def list_patients():
+
+    if not PATIENTS_DIR.is_dir():
+        return []
+
+    return [
+        patient_record(directory)
+        for directory in sorted(PATIENTS_DIR.iterdir())
+        if directory.is_dir() and PATIENT_ID.match(directory.name)
+    ]
+
+
+@app.get("/api/patients/{patient_id}")
+def get_patient(patient_id: str):
+
+    return patient_record(patient_dir(patient_id))
+
+
+@app.post("/api/patients/{patient_id}/analyze")
+def analyze_patient(patient_id: str):
+    """Analysiert die gespeicherten Scans eines Patienten (ohne Upload)."""
+
+    directory = patient_dir(patient_id)
+
+    paths = {
+        sequence: directory / f"{sequence}.nii.gz"
+        for sequence in MSD_ORDER
+    }
+
+    missing = [s.upper() for s, path in paths.items() if not path.exists()]
+
+    if missing:
+        raise HTTPException(
+            400,
+            f"Missing MRI sequences for {patient_id}: {', '.join(missing)}."
+        )
+
+    with tempfile.TemporaryDirectory() as tmp:
+
+        scan_path = combine_sequences(paths, Path(tmp) / "scan.nii.gz")
+
+        return run_analysis(scan_path, patient_id, Path(tmp))
 
 
 # ============================================================

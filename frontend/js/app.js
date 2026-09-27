@@ -1,5 +1,6 @@
 import {
-    analyzeMRI
+    analyzeMRI,
+    analyzePatient
 } from "./api.js";
 
 
@@ -492,10 +493,26 @@ function renderLegend(entries) {
    ANALYSIS
 ============================================================ */
 
+/**
+ * Patient hat alle 4 Sequenzen auf dem Server -> Analyse ohne Upload.
+ */
+function hasStoredScans() {
+
+    return Boolean(
+        state.patient?.has_scans
+    );
+}
+
+
 async function startAnalysis() {
 
+    // hochgeladene Dateien haben Vorrang vor gespeicherten Scans
+    const useUpload =
+        state.selectedFiles.length > 0;
+
+
     if (
-        !state.selectedFiles.length ||
+        (!useUpload && !hasStoredScans()) ||
         state.analysis.loading
     ) {
         return;
@@ -524,17 +541,23 @@ async function startAnalysis() {
 
     renderLoading(
         $("resultContent"),
-        selectionLabel(state.selectedFiles)
+        useUpload
+            ? selectionLabel(state.selectedFiles)
+            : `${state.patient.id} (scans on file)`
     );
 
 
     try {
 
         const result =
-            await analyzeMRI(
-                state.selectedFiles,
-                state.patient?.id
-            );
+            useUpload
+                ? await analyzeMRI(
+                    state.selectedFiles,
+                    state.patient?.id
+                )
+                : await analyzePatient(
+                    state.patient.id
+                );
 
 
         // Anzeige: Patientenname statt Dateiname
@@ -888,8 +911,21 @@ function resetAnalysis() {
     setViewerButtonsEnabled(false);
 
 
+    // Patient mit gespeicherten Scans: sofort analysierbar
+    if (hasStoredScans()) {
+
+        $("scanMeta").textContent =
+            "4 MRI sequences on file (FLAIR, T1, T1ce, T2) · " +
+            "or upload new files";
+
+        $("imageTag").textContent =
+            "On file";
+
+    }
+
+
     $("analyzeBtn").disabled =
-        true;
+        !hasStoredScans();
 }
 
 
@@ -908,7 +944,8 @@ function openAnalysis(patient) {
     }
 
 
-    if (patient !== state.patient) {
+    // per ID vergleichen: getPatient() liefert jedes Mal ein neues Objekt
+    if (patient?.id !== state.patient?.id) {
 
         state.patient =
             patient;
@@ -1028,11 +1065,30 @@ renderPatientContext(
 );
 
 
-state.patients =
-    await listPatients();
+try {
 
+    state.patients =
+        await listPatients();
 
-filterPatients("");
+    filterPatients("");
+
+}
+
+catch (error) {
+
+    console.error(
+        error
+    );
+
+    state.patients =
+        [];
+
+    $("patientList").innerHTML =
+        `<li class="patient-empty">
+            Patients could not be loaded – is the backend running?
+        </li>`;
+
+}
 
 
 showView("patients");

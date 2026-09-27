@@ -429,6 +429,19 @@ button:disabled {
 }
 
 
+.patient-complaint.is-empty,
+.context-complaint.is-empty {
+    color: #6f848c;
+
+    font-style: italic;
+}
+
+
+.context-complaint.is-empty {
+    border-left-color: var(--border);
+}
+
+
 .patient-chevron {
     color: var(--muted);
 

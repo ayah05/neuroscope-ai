@@ -28,6 +28,7 @@ from dotenv import load_dotenv
 from report import (
     DISCLAIMER,
     generate_report,
+    method_label,
     safe_text,
     safe_url,
     volumetry_lines,
@@ -315,7 +316,7 @@ def render_markdown(features, answer, evidence):
         "",
         f"**Patient:** {safe_text(features['patient_id'])}  ",
         f"**Date:** {date.today().strftime('%d %b %Y')}  ",
-        f"**Method:** {features['analysis_type']} ({features['model']}), "
+        f"**Method:** {method_label(features)}, "
         f"evidence via Amass, summary by {LLM_MODEL}",
         "",
         f"> ⚠️ {DISCLAIMER}",
